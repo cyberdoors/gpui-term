@@ -9,6 +9,8 @@ license = "MIT"
 
 [workspace.dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
+# gpui_component disabled - API incompatibility with current GPUI version
+# gpui_component = { git = "https://github.com/longbridge/gpui-component", package = "gpui-component" }
 alacritty_terminal = "0.25"
 portable-pty = "0.9"
 futures = "0.3"
