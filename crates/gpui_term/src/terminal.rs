@@ -19,13 +19,7 @@
 //! The event loop runs in a GPUI spawn task and processes events asynchronously.
 
 use std::{
-    borrow::Cow,
-    cmp,
-    collections::VecDeque,
-    ops::Deref,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
+    borrow::Cow, cmp, collections::VecDeque, ops::Deref, path::PathBuf, sync::Arc, time::Duration,
 };
 
 use alacritty_terminal::{
@@ -38,19 +32,27 @@ use alacritty_terminal::{
     sync::FairMutex,
     term::{Config, RenderableCursor, TermMode, cell::Cell},
     tty,
-    vte::ansi::{ClearMode, CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle, Handler},
+    vte::ansi::{
+        ClearMode, CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle, Handler,
+    },
 };
 use anyhow::{Context as _, Result};
-use futures::{FutureExt, StreamExt, channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded}};
+use futures::{
+    FutureExt, StreamExt,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
+};
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EventEmitter, Keystroke, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Size, Task,
-    TouchPhase, Window, px,
+    App, Bounds, ClipboardItem, Context, EventEmitter, Keystroke, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Size, Task, TouchPhase, Window,
+    px,
 };
 
 use crate::mappings::{
     keys::to_esc_str,
-    mouse::{alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report, scroll_report},
+    mouse::{
+        alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
+        scroll_report,
+    },
 };
 
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
@@ -287,9 +289,8 @@ impl TerminalBuilder {
                 shell_cmd = std::env::var("SHELL").ok();
             }
 
-            let alac_shell = shell_cmd.map(|program| {
-                tty::Shell::new(program, shell_args.unwrap_or_default())
-            });
+            let alac_shell =
+                shell_cmd.map(|program| tty::Shell::new(program, shell_args.unwrap_or_default()));
 
             let pty_options = tty::Options {
                 shell: alac_shell,
@@ -449,7 +450,8 @@ impl Terminal {
 
     /// Sends input to the terminal, scrolling to bottom and clearing selection.
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
         self.write_to_pty(input);
     }
@@ -541,27 +543,33 @@ impl Terminal {
     }
 
     pub fn scroll_line_up(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::Delta(1)));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(1)));
     }
 
     pub fn scroll_line_down(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::Delta(-1)));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Delta(-1)));
     }
 
     pub fn scroll_page_up(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::PageUp));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::PageUp));
     }
 
     pub fn scroll_page_down(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::PageDown));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::PageDown));
     }
 
     pub fn scroll_to_top(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::Top));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Top));
     }
 
     pub fn scroll_to_bottom(&mut self) {
-        self.events.push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
     /// Selects all text in the terminal.
@@ -574,7 +582,8 @@ impl Terminal {
     }
 
     fn set_selection(&mut self, selection: Option<(Selection, AlacPoint)>) {
-        self.events.push_back(InternalEvent::SetSelection(selection));
+        self.events
+            .push_back(InternalEvent::SetSelection(selection));
     }
 
     /// Copies selected text to clipboard.
@@ -625,13 +634,9 @@ impl Terminal {
         );
 
         if self.mouse_mode(e.modifiers.shift) {
-            if let Some(bytes) = mouse_button_report(
-                point,
-                e.button,
-                e.modifiers,
-                true,
-                self.last_content.mode,
-            ) {
+            if let Some(bytes) =
+                mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
+            {
                 self.write_to_pty(bytes);
             }
         } else {
@@ -652,7 +657,8 @@ impl Terminal {
                     };
 
                     if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
-                        self.events.push_back(InternalEvent::UpdateSelection(position));
+                        self.events
+                            .push_back(InternalEvent::UpdateSelection(position));
                         return;
                     }
 
@@ -660,7 +666,8 @@ impl Terminal {
                         .map(|selection_type| Selection::new(selection_type, point, side));
 
                     if let Some(sel) = selection {
-                        self.events.push_back(InternalEvent::SetSelection(Some((sel, point))));
+                        self.events
+                            .push_back(InternalEvent::SetSelection(Some((sel, point))));
                     }
                 }
                 _ => {}
@@ -678,13 +685,9 @@ impl Terminal {
                 self.last_content.display_offset,
             );
 
-            if let Some(bytes) = mouse_button_report(
-                point,
-                e.button,
-                e.modifiers,
-                false,
-                self.last_content.mode,
-            ) {
+            if let Some(bytes) =
+                mouse_button_report(point, e.button, e.modifiers, false, self.last_content.mode)
+            {
                 self.write_to_pty(bytes);
             }
         }
@@ -704,12 +707,9 @@ impl Terminal {
             );
 
             if self.mouse_changed(point, side) {
-                if let Some(bytes) = mouse_moved_report(
-                    point,
-                    e.pressed_button,
-                    e.modifiers,
-                    self.last_content.mode,
-                ) {
+                if let Some(bytes) =
+                    mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
+                {
                     self.write_to_pty(bytes);
                 }
             }
@@ -717,16 +717,23 @@ impl Terminal {
         cx.notify();
     }
 
-    pub fn mouse_drag(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>, cx: &mut Context<Self>) {
+    pub fn mouse_drag(
+        &mut self,
+        e: &MouseMoveEvent,
+        region: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
 
         if !self.mouse_mode(e.modifiers.shift) {
             self.selection_phase = SelectionPhase::Selecting;
-            self.events.push_back(InternalEvent::UpdateSelection(position));
+            self.events
+                .push_back(InternalEvent::UpdateSelection(position));
 
             if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
                 if let Some(scroll_lines) = self.drag_line_delta(e, region) {
-                    self.events.push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
+                    self.events
+                        .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
                 }
             }
 
@@ -764,22 +771,31 @@ impl Terminal {
                     self.last_content.display_offset,
                 );
 
-                if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode) {
+                if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
+                {
                     for scroll in scrolls {
                         self.write_to_pty(scroll);
                     }
                 }
-            } else if self.last_content.mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+            } else if self
+                .last_content
+                .mode
+                .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                 && !e.shift
             {
                 self.write_to_pty(alt_scroll(scroll_lines));
             } else if scroll_lines != 0 {
-                self.events.push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
+                self.events
+                    .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
             }
         }
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) -> Option<i32> {
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        scroll_multiplier: f32,
+    ) -> Option<i32> {
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             TouchPhase::Started => {
@@ -853,9 +869,8 @@ impl Terminal {
             }
             AlacTermEvent::MouseCursorDirty => {}
             AlacTermEvent::ColorRequest(index, format) => {
-                let color = self.term.lock().colors()[index].unwrap_or(
-                    alacritty_terminal::vte::ansi::Rgb { r: 0, g: 0, b: 0 }
-                );
+                let color = self.term.lock().colors()[index]
+                    .unwrap_or(alacritty_terminal::vte::ansi::Rgb { r: 0, g: 0, b: 0 });
                 self.write_to_pty(format(color).into_bytes());
             }
         }
@@ -870,7 +885,8 @@ impl Terminal {
         match event {
             InternalEvent::Resize(new_bounds) => {
                 let mut new_bounds = *new_bounds;
-                new_bounds.bounds.size.height = cmp::max(new_bounds.line_height, new_bounds.height());
+                new_bounds.bounds.size.height =
+                    cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
 
                 self.last_content.terminal_bounds = new_bounds;
@@ -897,7 +913,8 @@ impl Terminal {
                     term.grid_mut()[Line(0)][Column(i)] = cell;
                 }
 
-                term.grid_mut().cursor.point = AlacPoint::new(Line(0), term.grid_mut().cursor.point.column);
+                term.grid_mut().cursor.point =
+                    AlacPoint::new(Line(0), term.grid_mut().cursor.point.column);
                 let new_cursor = term.grid().cursor.point;
 
                 if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {

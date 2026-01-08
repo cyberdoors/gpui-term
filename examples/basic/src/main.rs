@@ -1,38 +1,50 @@
-//! Agent Term - A terminal application with project management sidebar
+//! Agent Term - A GPUI terminal with a floating sidebar overlay.
 //!
-//! This example demonstrates a layered UI with:
-//! - Left sidebar with project tree and terminal sessions
-//! - Main terminal area with colorful status bar
-//! - Blur and transparency effects
+//! This example focuses on reproducing Agent Term's current visual layout:
+//! - Floating, rounded sidebar with inset + shadow
+//! - Main terminal content padded to avoid the sidebar
+//! - Transparent/blurred window background
 
 use std::collections::HashMap;
 use std::env;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, rgba, App, AppContext, Application, Context, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, WindowBackgroundAppearance,
-    WindowOptions,
+    App, AppContext, Application, BoxShadow, Context, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
+    Window, WindowBackgroundAppearance, WindowOptions, actions, div, hsla, point, prelude::*, px,
+    rgb, rgba,
 };
 use gpui_term::{Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, TerminalView};
 
 actions!(agent_term, [Quit, ToggleSidebar]);
 
-// Colors
-const SIDEBAR_BG: u32 = 0x1a1d2e;
-const MAIN_BG: u32 = 0x1e2235;
-const HEADER_BG: u32 = 0x151825;
-const TEXT_PRIMARY: u32 = 0xc8ccd4;
-const TEXT_SECONDARY: u32 = 0x6b7280;
-const TEXT_MUTED: u32 = 0x4b5563;
-const ACCENT_CYAN: u32 = 0x5eead4;
-const ACCENT_ORANGE: u32 = 0xfbbf24;
-const ACCENT_GREEN: u32 = 0x4ade80;
-const ACCENT_PURPLE: u32 = 0xc084fc;
-const BORDER_COLOR: u32 = 0x2d3348;
+// Layout (mirrors the Tauri UI tokens / App.tsx layout math)
+const TITLEBAR_HEIGHT: f32 = 40.0;
+const SIDEBAR_INSET: f32 = 8.0;
+const SIDEBAR_GAP: f32 = 16.0;
+const SIDEBAR_MIN_WIDTH: f32 = 200.0;
+const SIDEBAR_MAX_WIDTH: f32 = 420.0;
 
-const BACKGROUND_OPACITY: f32 = 0.92;
+// Colors (approximate the current Agent Term Tauri tokens)
+const TEXT_PRIMARY: u32 = 0xd8d8d8;
+const TEXT_SUBTLE: u32 = 0xa6a6a6;
+const TEXT_FAINT: u32 = 0x5a5a5a;
+
+const SURFACE_ROOT: u32 = 0x000000;
+const SURFACE_SIDEBAR: u32 = 0x202020;
+const BORDER_SOFT: u32 = 0x3a3a3a;
+
+const SURFACE_ROOT_ALPHA: f32 = 0.05;
+const SURFACE_SIDEBAR_ALPHA: f32 = 0.32;
+const BORDER_SOFT_ALPHA: f32 = 0.50;
+
 const ENABLE_BLUR: bool = true;
+
+fn rgba_u32(rgb: u32, alpha: f32) -> u32 {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+    (rgb << 8) | a
+}
 
 fn main() {
     Application::new().run(|cx: &mut App| {
@@ -91,6 +103,10 @@ fn main() {
                     terminal_view: None,
                     focus_handle,
                     sidebar_visible: true,
+                    sidebar_width: 250.0,
+                    resizing_sidebar: false,
+                    resize_start_x: Pixels::ZERO,
+                    resize_start_width: 250.0,
                     projects: vec![
                         Project {
                             name: "Agent Term".into(),
@@ -153,6 +169,10 @@ struct AgentTermApp {
     terminal_view: Option<Entity<TerminalView>>,
     focus_handle: FocusHandle,
     sidebar_visible: bool,
+    sidebar_width: f32,
+    resizing_sidebar: bool,
+    resize_start_x: Pixels,
+    resize_start_width: f32,
     projects: Vec<Project>,
 }
 
@@ -177,18 +197,114 @@ impl AgentTermApp {
         cx.notify();
     }
 
-    fn render_sidebar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let alpha = (BACKGROUND_OPACITY * 255.0) as u32;
+    fn start_sidebar_resize(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.resizing_sidebar = true;
+        self.resize_start_x = event.position.x;
+        self.resize_start_width = self.sidebar_width;
+        cx.notify();
+    }
+
+    fn stop_sidebar_resize(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.resizing_sidebar {
+            self.resizing_sidebar = false;
+            cx.notify();
+        }
+    }
+
+    fn update_sidebar_resize(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.resizing_sidebar || !event.dragging() {
+            return;
+        }
+
+        let delta = event.position.x - self.resize_start_x;
+        let next_width =
+            (self.resize_start_width + delta / px(1.0)).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        if (next_width - self.sidebar_width).abs() > 0.1 {
+            self.sidebar_width = next_width;
+            cx.notify();
+        }
+    }
+
+    fn sidebar_shadow() -> Vec<BoxShadow> {
+        vec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.25),
+                offset: point(px(0.0), px(18.0)),
+                blur_radius: px(45.0),
+                spread_radius: px(0.0),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.15),
+                offset: point(px(0.0), px(6.0)),
+                blur_radius: px(18.0),
+                spread_radius: px(0.0),
+            },
+        ]
+    }
+
+    fn render_sidebar_shell(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar_top = TITLEBAR_HEIGHT + SIDEBAR_INSET;
 
         div()
-            .w(px(260.0))
-            .h_full()
-            .flex_shrink_0()
-            .bg(rgba(SIDEBAR_BG << 8 | alpha))
-            .border_r_1()
-            .border_color(rgb(BORDER_COLOR))
+            .id("sidebar-shell")
+            .absolute()
+            .left(px(SIDEBAR_INSET))
+            .top(px(sidebar_top))
+            .bottom(px(SIDEBAR_INSET))
+            .w(px(self.sidebar_width))
+            .relative()
+            .child(
+                div()
+                    .id("sidebar-wrapper")
+                    .size_full()
+                    .rounded(px(16.0))
+                    .overflow_hidden()
+                    .bg(rgba(rgba_u32(SURFACE_SIDEBAR, SURFACE_SIDEBAR_ALPHA)))
+                    .border_1()
+                    .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+                    .shadow(Self::sidebar_shadow())
+                    .child(self.render_sidebar_content(cx)),
+            )
+            .child(
+                div()
+                    .id("sidebar-resizer")
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(self.sidebar_width - 3.0))
+                    .w(px(6.0))
+                    .rounded(px(999.0))
+                    .bg(gpui::transparent_black())
+                    .cursor_col_resize()
+                    .hover(|s| s.bg(rgba(rgba_u32(TEXT_PRIMARY, 0.20))))
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::start_sidebar_resize))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_sidebar_resize))
+                    .on_mouse_move(cx.listener(Self::update_sidebar_resize)),
+            )
+    }
+
+    fn render_sidebar_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("sidebar-content")
+            .size_full()
             .flex()
             .flex_col()
+            .pt(px(8.0))
             .child(self.render_sidebar_header())
             .child(self.render_add_project())
             .child(self.render_project_tree())
@@ -202,7 +318,7 @@ impl AgentTermApp {
             .items_center()
             .justify_between()
             .border_b_1()
-            .border_color(rgb(BORDER_COLOR))
+            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
             .child(
                 div()
                     .text_sm()
@@ -221,17 +337,14 @@ impl AgentTermApp {
     }
 
     fn render_add_project(&self) -> impl IntoElement {
-        div()
-            .px(px(16.0))
-            .py(px(12.0))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_SECONDARY))
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
-                    .child("+ Add Project"),
-            )
+        div().px(px(16.0)).py(px(12.0)).child(
+            div()
+                .text_sm()
+                .text_color(rgb(TEXT_SUBTLE))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
+                .child("+ Add Project"),
+        )
     }
 
     fn render_project_tree(&self) -> impl IntoElement {
@@ -265,7 +378,7 @@ impl AgentTermApp {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(TEXT_SECONDARY))
+                            .text_color(rgb(TEXT_SUBTLE))
                             .child(if project.expanded { "▼" } else { "▶" }),
                     )
                     .child(
@@ -285,13 +398,12 @@ impl AgentTermApp {
                             .px(px(8.0))
                             .py(px(4.0))
                             .text_sm()
-                            .text_color(rgb(TEXT_MUTED))
+                            .text_color(rgb(TEXT_FAINT))
                             .child("No terminals"),
                     );
                 } else {
                     for session in &project.sessions {
-                        sessions_container =
-                            sessions_container.child(self.render_session(session));
+                        sessions_container = sessions_container.child(self.render_session(session));
                     }
                 }
 
@@ -322,7 +434,7 @@ impl AgentTermApp {
                             .h(px(12.0))
                             .rounded(px(2.0))
                             .border_1()
-                            .border_color(rgb(TEXT_SECONDARY)),
+                            .border_color(rgb(TEXT_SUBTLE)),
                     )
                     .child(
                         div()
@@ -343,7 +455,7 @@ impl AgentTermApp {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(TEXT_SECONDARY))
+                            .text_color(rgb(TEXT_SUBTLE))
                             .px(px(4.0))
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
@@ -352,7 +464,7 @@ impl AgentTermApp {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(TEXT_SECONDARY))
+                            .text_color(rgb(TEXT_SUBTLE))
                             .px(px(4.0))
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
@@ -361,101 +473,39 @@ impl AgentTermApp {
             )
     }
 
-    fn render_main_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let alpha = (BACKGROUND_OPACITY * 255.0) as u32;
+    fn render_terminal_container(&self) -> impl IntoElement {
+        let content_left = if self.sidebar_visible {
+            self.sidebar_width + SIDEBAR_INSET + SIDEBAR_GAP
+        } else {
+            0.0
+        };
 
         div()
-            .flex_1()
-            .h_full()
-            .bg(rgba(MAIN_BG << 8 | alpha))
+            .id("terminal-container")
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .left(px(content_left))
             .flex()
             .flex_col()
-            .child(self.render_status_bar())
-            .child(self.render_terminal_area(cx))
-    }
-
-    fn render_status_bar(&self) -> impl IntoElement {
-        div()
-            .h(px(36.0))
-            .px(px(16.0))
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .border_b_1()
-            .border_color(rgb(BORDER_COLOR))
-            // User segment
-            .child(status_segment(
-                " adityasharma",
-                ACCENT_CYAN,
-                0x134e4a,
-                true,
-                false,
-            ))
-            // Path segment
-            .child(status_segment(
-                ".../terminal-app",
-                ACCENT_CYAN,
-                0x134e4a,
-                false,
-                false,
-            ))
-            // Git branch segment
-            .child(status_segment(" 0.1.4 !", ACCENT_ORANGE, 0x78350f, false, false))
-            // Version segment
-            .child(status_segment(" v24.4.1", ACCENT_GREEN, 0x14532d, false, false))
-            // Time segment
-            .child(status_segment(" 22:09", ACCENT_PURPLE, 0x581c87, false, true))
-            // Chevron
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(TEXT_SECONDARY))
-                    .pl(px(4.0))
-                    .child("❯"),
-            )
-    }
-
-    fn render_terminal_area(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex_1()
-            .w_full()
             .when_some(self.terminal_view.as_ref(), |el, tv| {
-                el.child(tv.clone())
+                el.child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .py(px(16.0))
+                        .px(px(8.0))
+                        .child(tv.clone()),
+                )
             })
             .when(self.terminal_view.is_none(), |el| {
                 el.flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        div()
-                            .text_color(rgb(TEXT_MUTED))
-                            .child("Loading terminal..."),
-                    )
+                    .child(div().text_color(rgb(TEXT_FAINT)).child("Loading terminal…"))
             })
     }
-}
-
-fn status_segment(
-    text: impl Into<SharedString>,
-    fg_color: u32,
-    bg_color: u32,
-    is_first: bool,
-    is_last: bool,
-) -> impl IntoElement {
-    let text: SharedString = text.into();
-    div()
-        .flex()
-        .items_center()
-        .h(px(22.0))
-        .px(px(10.0))
-        .bg(rgb(bg_color))
-        .text_color(rgb(fg_color))
-        .text_xs()
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .when(is_first, |s| s.rounded_l(px(4.0)))
-        .when(is_last, |s| s.rounded_r(px(4.0)))
-        .when(!is_first && !is_last, |s| s.rounded(px(0.0)))
-        .child(text)
 }
 
 fn icon_button(_icon_path: &str) -> impl IntoElement {
@@ -468,7 +518,7 @@ fn icon_button(_icon_path: &str) -> impl IntoElement {
         .justify_center()
         .rounded(px(4.0))
         .cursor_pointer()
-        .text_color(rgb(TEXT_SECONDARY))
+        .text_color(rgb(TEXT_SUBTLE))
         .hover(|s| s.text_color(rgb(TEXT_PRIMARY)).bg(rgba(0xffffff10)))
         .child("•")
 }
@@ -481,13 +531,16 @@ impl Render for AgentTermApp {
             .top_0()
             .left_0()
             .size_full()
-            .flex()
+            .relative()
+            .bg(rgba(rgba_u32(SURFACE_ROOT, SURFACE_ROOT_ALPHA)))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::toggle_sidebar))
+            .on_mouse_move(cx.listener(Self::update_sidebar_resize))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_sidebar_resize))
+            .child(self.render_terminal_container())
             .when(self.sidebar_visible, |el| {
-                el.child(self.render_sidebar(cx))
+                el.child(self.render_sidebar_shell(cx))
             })
-            .child(self.render_main_content(cx))
     }
 }
 

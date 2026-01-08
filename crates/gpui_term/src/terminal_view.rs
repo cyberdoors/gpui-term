@@ -21,16 +21,25 @@
 //! ```
 
 use gpui::{
-    actions, div, prelude::*, App, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Render, ScrollWheelEvent, Styled, Window,
+    App, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
+    ScrollWheelEvent, Styled, Window, actions, div,
 };
 
 use crate::{Event, Terminal, TerminalElement};
 
 actions!(
     terminal,
-    [Copy, Paste, Clear, SelectAll, ScrollLineUp, ScrollLineDown, ScrollPageUp, ScrollPageDown]
+    [
+        Copy,
+        Paste,
+        Clear,
+        SelectAll,
+        ScrollLineUp,
+        ScrollLineDown,
+        ScrollPageUp,
+        ScrollPageDown
+    ]
 );
 
 /// Main terminal view component that handles input and coordinates rendering.
@@ -50,11 +59,7 @@ impl TerminalView {
     /// Creates a new TerminalView wrapping the given Terminal entity.
     ///
     /// Sets up event subscriptions and focus handling for the terminal.
-    pub fn new(
-        terminal: Entity<Terminal>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(terminal: Entity<Terminal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         cx.subscribe(&terminal, |this, _, event: &Event, cx| {
@@ -146,12 +151,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn on_mouse_up(
-        &mut self,
-        event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_up(event, cx);
         });
@@ -181,7 +181,12 @@ impl TerminalView {
         });
     }
 
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_scroll(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.scroll_wheel(event, 1.0);
         });
@@ -230,7 +235,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_line_down(&mut self, _: &ScrollLineDown, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_line_down(
+        &mut self,
+        _: &ScrollLineDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.scroll_line_down();
         });
@@ -244,7 +254,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_page_down(&mut self, _: &ScrollPageDown, _window: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_page_down(
+        &mut self,
+        _: &ScrollPageDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.scroll_page_down();
         });
@@ -303,9 +318,11 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::scroll_line_down))
             .on_action(cx.listener(Self::scroll_page_up))
             .on_action(cx.listener(Self::scroll_page_down))
-            .when(is_focused, |div| {
-                div.border_1().border_color(gpui::rgb(0x007acc))
-            })
-            .child(TerminalElement::new(terminal, focus_handle.clone(), is_focused, true))
+            .child(TerminalElement::new(
+                terminal,
+                focus_handle.clone(),
+                is_focused,
+                true,
+            ))
     }
 }

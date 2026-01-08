@@ -28,10 +28,10 @@ use alacritty_terminal::{
     vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor},
 };
 use gpui::{
-    AbsoluteLength, App, Bounds, ContentMask, Element, ElementId, Entity,
-    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, InputHandler,
-    IntoElement, LayoutId, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, TextRun,
-    UTF16Selection, UnderlineStyle, Window, fill, point, px, size,
+    AbsoluteLength, App, Bounds, ContentMask, Element, ElementId, Entity, FocusHandle, Font,
+    FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, InputHandler, IntoElement, LayoutId,
+    Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UTF16Selection, UnderlineStyle,
+    Window, fill, point, px, size,
 };
 use itertools::Itertools;
 
@@ -260,15 +260,15 @@ impl CursorLayout {
                 window.paint_quad(gpui::outline(bounds, self.color, gpui::BorderStyle::Solid));
             }
             CursorShape::Bar => {
-                let bar_bounds = Bounds::new(
-                    bounds.origin,
-                    size(px(2.0), bounds.size.height),
-                );
+                let bar_bounds = Bounds::new(bounds.origin, size(px(2.0), bounds.size.height));
                 window.paint_quad(fill(bar_bounds, self.color));
             }
             CursorShape::Underline => {
                 let underline_bounds = Bounds::new(
-                    point(bounds.origin.x, bounds.origin.y + bounds.size.height - px(2.0)),
+                    point(
+                        bounds.origin.x,
+                        bounds.origin.y + bounds.size.height - px(2.0),
+                    ),
                     size(bounds.size.width, px(2.0)),
                 );
                 window.paint_quad(fill(underline_bounds, self.color));
@@ -456,7 +456,8 @@ impl TerminalElement {
                     if let Some(ref mut batch) = current_batch {
                         if batch.can_append(&cell_style)
                             && batch.start_point.line == cell_point.line
-                            && batch.start_point.column + batch.cell_count as i32 == cell_point.column
+                            && batch.start_point.column + batch.cell_count as i32
+                                == cell_point.column
                         {
                             batch.append_char(cell.c);
                             if let Some(chars) = zero_width_chars {
@@ -538,11 +539,7 @@ impl TerminalElement {
     }
 
     /// Converts Alacritty cell styles to a GPUI TextRun.
-    fn cell_style(
-        indexed: &IndexedCell,
-        fg: AnsiColor,
-        text_style: &TextStyle,
-    ) -> TextRun {
+    fn cell_style(indexed: &IndexedCell, fg: AnsiColor, text_style: &TextStyle) -> TextRun {
         let flags = indexed.cell.flags;
         let mut fg_color = convert_color(&fg);
 
@@ -695,8 +692,7 @@ impl Element for TerminalElement {
         let mode = *mode;
         let display_offset = *display_offset;
 
-        let (rects, batched_text_runs) =
-            Self::layout_grid(cells.iter().cloned(), &text_style);
+        let (rects, batched_text_runs) = Self::layout_grid(cells.iter().cloned(), &text_style);
 
         let cursor_layout = if let AlacCursorShape::Hidden = cursor.shape {
             None
@@ -1051,9 +1047,21 @@ mod tests {
 
         for color in colors {
             let hsla = named_color_to_hsla(color);
-            assert!(hsla.a >= 0.0 && hsla.a <= 1.0, "Alpha should be in valid range for {:?}", color);
-            assert!(hsla.s >= 0.0 && hsla.s <= 1.0, "Saturation should be in valid range for {:?}", color);
-            assert!(hsla.l >= 0.0 && hsla.l <= 1.0, "Lightness should be in valid range for {:?}", color);
+            assert!(
+                hsla.a >= 0.0 && hsla.a <= 1.0,
+                "Alpha should be in valid range for {:?}",
+                color
+            );
+            assert!(
+                hsla.s >= 0.0 && hsla.s <= 1.0,
+                "Saturation should be in valid range for {:?}",
+                color
+            );
+            assert!(
+                hsla.l >= 0.0 && hsla.l <= 1.0,
+                "Lightness should be in valid range for {:?}",
+                color
+            );
         }
     }
 
@@ -1065,14 +1073,21 @@ mod tests {
 
         let bright_white = indexed_color_to_hsla(15);
         let named_bright_white = named_color_to_hsla(NamedColor::BrightWhite);
-        assert_eq!(bright_white, named_bright_white, "Index 15 should map to bright white");
+        assert_eq!(
+            bright_white, named_bright_white,
+            "Index 15 should map to bright white"
+        );
     }
 
     #[test]
     fn test_indexed_color_cube_colors_produce_valid_hsla() {
         for idx in 16..=231u8 {
             let hsla = indexed_color_to_hsla(idx);
-            assert!(hsla.a == 1.0, "Indexed color {} should have full alpha", idx);
+            assert!(
+                hsla.a == 1.0,
+                "Indexed color {} should have full alpha",
+                idx
+            );
         }
     }
 
@@ -1080,14 +1095,26 @@ mod tests {
     fn test_indexed_color_grayscale_produces_valid_hsla() {
         for idx in 232..=255u8 {
             let hsla = indexed_color_to_hsla(idx);
-            assert!(hsla.a == 1.0, "Grayscale color {} should have full alpha", idx);
-            assert!(hsla.s < 0.01, "Grayscale color {} should have near-zero saturation", idx);
+            assert!(
+                hsla.a == 1.0,
+                "Grayscale color {} should have full alpha",
+                idx
+            );
+            assert!(
+                hsla.s < 0.01,
+                "Grayscale color {} should have near-zero saturation",
+                idx
+            );
         }
     }
 
     #[test]
     fn test_convert_spec_color_rgb_values() {
-        let rgb = alacritty_terminal::vte::ansi::Rgb { r: 255, g: 128, b: 64 };
+        let rgb = alacritty_terminal::vte::ansi::Rgb {
+            r: 255,
+            g: 128,
+            b: 64,
+        };
         let color = AnsiColor::Spec(rgb);
         let hsla = convert_color(&color);
 
@@ -1113,7 +1140,10 @@ mod tests {
         let font_size = AbsoluteLength::Pixels(px(12.0));
         let batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1, font_size);
 
-        assert!(batch.can_append(&style2), "Should be able to append same style");
+        assert!(
+            batch.can_append(&style2),
+            "Should be able to append same style"
+        );
     }
 
     #[test]
@@ -1135,7 +1165,10 @@ mod tests {
         let font_size = AbsoluteLength::Pixels(px(12.0));
         let batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'a', style1, font_size);
 
-        assert!(!batch.can_append(&style2), "Should not be able to append different color");
+        assert!(
+            !batch.can_append(&style2),
+            "Should not be able to append different color"
+        );
     }
 
     #[test]
@@ -1155,7 +1188,10 @@ mod tests {
 
         batch.append_char('b');
 
-        assert_eq!(batch.cell_count, 2, "Cell count should increment after append");
+        assert_eq!(
+            batch.cell_count, 2,
+            "Cell count should increment after append"
+        );
         assert_eq!(batch.text, "ab", "Text should be 'ab' after append");
     }
 
@@ -1166,7 +1202,10 @@ mod tests {
         region1.end_col = 2;
         let region2 = BackgroundRegion::new(0, 3, color);
 
-        assert!(region1.can_merge_with(&region2), "Adjacent horizontal regions with same color should merge");
+        assert!(
+            region1.can_merge_with(&region2),
+            "Adjacent horizontal regions with same color should merge"
+        );
     }
 
     #[test]
@@ -1174,17 +1213,31 @@ mod tests {
         let region1 = BackgroundRegion::new(0, 0, Hsla::red());
         let region2 = BackgroundRegion::new(0, 1, Hsla::blue());
 
-        assert!(!region1.can_merge_with(&region2), "Regions with different colors should not merge");
+        assert!(
+            !region1.can_merge_with(&region2),
+            "Regions with different colors should not merge"
+        );
     }
 
     #[test]
     fn test_display_cursor_calculates_offset_correctly() {
-        let cursor_point = AlacPoint::new(alacritty_terminal::index::Line(5), alacritty_terminal::index::Column(10));
+        let cursor_point = AlacPoint::new(
+            alacritty_terminal::index::Line(5),
+            alacritty_terminal::index::Column(10),
+        );
         let display_offset = 3usize;
 
         let display_cursor = DisplayCursor::from(cursor_point, display_offset);
 
-        assert_eq!(display_cursor.line(), 8, "Line should be cursor line + display offset");
-        assert_eq!(display_cursor.col(), 10, "Column should match cursor column");
+        assert_eq!(
+            display_cursor.line(),
+            8,
+            "Line should be cursor line + display offset"
+        );
+        assert_eq!(
+            display_cursor.col(),
+            10,
+            "Column should match cursor column"
+        );
     }
 }
