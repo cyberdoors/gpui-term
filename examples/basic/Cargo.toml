@@ -1,0 +1,16 @@
+[package]
+name = "basic"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "basic"
+path = "src/main.rs"
+
+[dependencies]
+gpui_term = { path = "../../crates/gpui_term" }
+gpui.workspace = true
+portable-pty.workspace = true
+anyhow.workspace = true

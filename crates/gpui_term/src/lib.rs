@@ -1,0 +1,11 @@
+mod mappings;
+mod terminal;
+mod terminal_element;
+mod terminal_view;
+
+pub use terminal::{Event, IndexedCell, Terminal, TerminalBuilder, TerminalBounds, TerminalContent, ZedListener};
+pub use terminal_element::{TerminalElement, TextStyle, convert_color};
+pub use terminal_view::{
+    Clear, Copy, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, SelectAll,
+    TerminalView,
+};
