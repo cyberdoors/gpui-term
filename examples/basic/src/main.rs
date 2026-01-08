@@ -20,11 +20,11 @@ use gpui_term::{Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, Termin
 actions!(agent_term, [Quit, ToggleSidebar]);
 
 // Layout (mirrors the Tauri UI tokens / App.tsx layout math)
-const TITLEBAR_HEIGHT: f32 = 40.0;
 const SIDEBAR_INSET: f32 = 8.0;
 const SIDEBAR_GAP: f32 = 16.0;
 const SIDEBAR_MIN_WIDTH: f32 = 200.0;
 const SIDEBAR_MAX_WIDTH: f32 = 420.0;
+const SIDEBAR_HEADER_LEFT_PADDING: f32 = 68.0;
 
 // Colors (approximate the current Agent Term Tauri tokens)
 const TEXT_PRIMARY: u32 = 0xd8d8d8;
@@ -258,13 +258,11 @@ impl AgentTermApp {
     }
 
     fn render_sidebar_shell(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar_top = TITLEBAR_HEIGHT + SIDEBAR_INSET;
-
         div()
             .id("sidebar-shell")
             .absolute()
             .left(px(SIDEBAR_INSET))
-            .top(px(sidebar_top))
+            .top(px(SIDEBAR_INSET))
             .bottom(px(SIDEBAR_INSET))
             .w(px(self.sidebar_width))
             .relative()
@@ -304,7 +302,6 @@ impl AgentTermApp {
             .size_full()
             .flex()
             .flex_col()
-            .pt(px(8.0))
             .child(self.render_sidebar_header())
             .child(self.render_add_project())
             .child(self.render_project_tree())
@@ -312,8 +309,9 @@ impl AgentTermApp {
 
     fn render_sidebar_header(&self) -> impl IntoElement {
         div()
-            .h(px(52.0))
-            .px(px(16.0))
+            .h(px(44.0))
+            .pl(px(SIDEBAR_HEADER_LEFT_PADDING))
+            .pr(px(16.0))
             .flex()
             .items_center()
             .justify_between()
