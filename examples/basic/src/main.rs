@@ -6,18 +6,22 @@
 //! - Spawn a terminal with PTY connection
 //! - Handle async terminal initialization
 //! - Display a loading state while the terminal initializes
+//! - Use blur and transparency effects
 
 use std::collections::HashMap;
 use std::env;
 
 use gpui::{
-    actions, div, rgb, App, AppContext, Application, Context, Entity, FocusHandle, Focusable,
+    actions, div, rgb, rgba, App, AppContext, Application, Context, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, Styled, Window,
-    WindowOptions,
+    WindowBackgroundAppearance, WindowOptions,
 };
 use gpui_term::{Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, TerminalView};
 
 actions!(basic_terminal, [Quit]);
+
+/// Background opacity for the terminal (0.0 = fully transparent, 1.0 = fully opaque)
+const BACKGROUND_OPACITY: f32 = 0.85;
 
 fn main() {
     Application::new().run(|cx: &mut App| {
@@ -38,10 +42,13 @@ fn main() {
                 title: Some("gpui-term".into()),
                 ..Default::default()
             }),
+            window_background: WindowBackgroundAppearance::Blurred,
             ..Default::default()
         };
 
         cx.open_window(window_options, |window, cx| {
+            // Enable blur effect on the window
+            window.set_background_appearance(WindowBackgroundAppearance::Blurred);
             let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
             let mut env: HashMap<String, String> = env::vars().collect();
@@ -118,7 +125,7 @@ impl MainView {
 }
 
 impl Render for MainView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let content = if let Some(terminal_view) = &self.terminal_view {
             div().size_full().child(terminal_view.clone())
         } else {
@@ -131,10 +138,15 @@ impl Render for MainView {
                 .child("Loading terminal...")
         };
 
+        // Use semi-transparent background for blur effect
+        // rgba takes values 0-255 for r,g,b and 0-255 for alpha
+        let alpha = (BACKGROUND_OPACITY * 255.0) as u32;
+        let bg_color = rgba(0x1e1e1e00 | alpha);
+
         div()
             .id("main-view")
             .size_full()
-            .bg(rgb(0x1e1e1e))
+            .bg(bg_color)
             .track_focus(&self.focus_handle)
             .child(content)
     }

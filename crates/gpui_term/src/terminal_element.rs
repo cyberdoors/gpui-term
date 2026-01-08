@@ -615,7 +615,13 @@ impl Default for TextStyle {
             font_size: AbsoluteLength::Pixels(px(14.0)),
             font_weight: FontWeight::NORMAL,
             foreground: Hsla::white(),
-            background: Hsla::black(),
+            // Semi-transparent background for blur effect support
+            background: Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.0,
+                a: 0.0, // Fully transparent - let parent handle background
+            },
         }
     }
 }

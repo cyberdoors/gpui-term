@@ -276,7 +276,8 @@ impl Render for TerminalView {
         div()
             .id("terminal-view")
             .size_full()
-            .bg(gpui::rgb(0x1e1e1e))
+            // Transparent background to allow blur effect from parent window
+            .bg(gpui::transparent_black())
             .track_focus(&focus_handle)
             .key_context("Terminal")
             .on_key_down(cx.listener(Self::on_key_down))
