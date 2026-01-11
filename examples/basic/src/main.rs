@@ -15,7 +15,10 @@ use gpui::{
     Window, WindowBackgroundAppearance, WindowOptions, actions, div, hsla, point, prelude::*, px,
     rgb, rgba,
 };
-use gpui_term::{Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, TerminalView};
+use gpui_term::{
+    Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, TerminalConfig, TerminalView,
+    TextStyle,
+};
 
 actions!(agent_term, [Quit, ToggleSidebar]);
 
@@ -81,6 +84,10 @@ fn main() {
         cx.open_window(window_options, |window, cx| {
             window.set_background_appearance(background_appearance);
 
+            let terminal_config =
+                TerminalConfig::load_or_create().unwrap_or_else(|_| TerminalConfig::default());
+            let text_style = TextStyle::from_config(&terminal_config);
+
             let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
             let mut env_vars: HashMap<String, String> = env::vars().collect();
             env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
@@ -109,6 +116,7 @@ fn main() {
                     resizing_sidebar: false,
                     resize_start_x: Pixels::ZERO,
                     resize_start_width: 250.0,
+                    text_style,
                     projects: vec![
                         Project {
                             name: "Agent Term".into(),
@@ -175,6 +183,7 @@ struct AgentTermApp {
     resizing_sidebar: bool,
     resize_start_x: Pixels,
     resize_start_width: f32,
+    text_style: TextStyle,
     projects: Vec<Project>,
 }
 
@@ -185,7 +194,10 @@ impl AgentTermApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let terminal_view = cx.new(|cx| TerminalView::new(terminal.clone(), window, cx));
+        let text_style = self.text_style.clone();
+        let terminal_view = cx.new(|cx| {
+            TerminalView::new_with_style(terminal.clone(), text_style, window, cx)
+        });
         let focus_handle = terminal_view.read(cx).focus_handle(cx);
         focus_handle.focus(window, cx);
 

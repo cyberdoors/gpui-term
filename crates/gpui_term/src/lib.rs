@@ -1,8 +1,10 @@
 mod mappings;
 mod terminal;
+mod config;
 mod terminal_element;
 mod terminal_view;
 
+pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig};
 pub use terminal::{
     Event, IndexedCell, Terminal, TerminalBounds, TerminalBuilder, TerminalContent, ZedListener,
 };

@@ -53,6 +53,7 @@ pub struct TerminalView {
     terminal: Entity<Terminal>,
     focus_handle: FocusHandle,
     has_bell: bool,
+    text_style: crate::TextStyle,
 }
 
 impl TerminalView {
@@ -60,6 +61,16 @@ impl TerminalView {
     ///
     /// Sets up event subscriptions and focus handling for the terminal.
     pub fn new(terminal: Entity<Terminal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::new_with_style(terminal, crate::TextStyle::default(), window, cx)
+    }
+
+    /// Creates a new TerminalView with a custom text style.
+    pub fn new_with_style(
+        terminal: Entity<Terminal>,
+        text_style: crate::TextStyle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
 
         cx.subscribe(&terminal, |this, _, event: &Event, cx| {
@@ -89,6 +100,7 @@ impl TerminalView {
             terminal,
             focus_handle,
             has_bell: false,
+            text_style,
         }
     }
 
@@ -338,6 +350,7 @@ impl Render for TerminalView {
                 focus_handle.clone(),
                 is_focused,
                 true,
+                self.text_style.clone(),
             ))
     }
 }

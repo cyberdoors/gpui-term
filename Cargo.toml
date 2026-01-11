@@ -21,3 +21,6 @@ anyhow = "1.0"
 log = "0.4"
 itertools = "0.14"
 smallvec = { version = "1.15", features = ["const_new"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5.0"

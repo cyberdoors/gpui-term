@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```ignore
-//! let element = TerminalElement::new(terminal_entity, focus_handle);
+//! let element = TerminalElement::new(terminal_entity, focus_handle, true, true, TextStyle::default());
 //! ```
 
 use std::mem;
@@ -36,13 +36,14 @@ use gpui::{
 };
 use itertools::Itertools;
 
-use crate::{IndexedCell, Terminal, TerminalBounds, TerminalContent};
+use crate::{IndexedCell, Terminal, TerminalBounds, TerminalConfig, TerminalContent, TerminalTheme};
 
 /// Layout state computed during prepaint, used for painting.
 pub struct LayoutState {
     hitbox: Hitbox,
     batched_text_runs: Vec<BatchedTextRun>,
     background_rects: Vec<LayoutRect>,
+    block_fragments: Vec<BlockFragment>,
     selection_rects: Vec<LayoutRect>,
     cursor: Option<CursorLayout>,
     background_color: Hsla,
@@ -193,6 +194,39 @@ impl LayoutRect {
         )
         .into();
 
+        window.paint_quad(fill(Bounds::new(position, rect_size), self.color));
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BlockRect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BlockFragment {
+    point: AlacPoint<i32, i32>,
+    rect: BlockRect,
+    color: Hsla,
+}
+
+impl BlockFragment {
+    fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalBounds, window: &mut Window) {
+        let cell_origin = point(
+            origin.x + self.point.column as f32 * dimensions.cell_width,
+            origin.y + self.point.line as f32 * dimensions.line_height,
+        );
+        let position = point(
+            cell_origin.x + self.rect.x * dimensions.cell_width,
+            cell_origin.y + self.rect.y * dimensions.line_height,
+        );
+        let rect_size = size(
+            dimensions.cell_width * self.rect.width,
+            dimensions.line_height * self.rect.height,
+        );
         window.paint_quad(fill(Bounds::new(position, rect_size), self.color));
     }
 }
@@ -367,6 +401,7 @@ pub struct TerminalElement {
     focused: bool,
     cursor_visible: bool,
     cached_font_family: Option<gpui::SharedString>,
+    text_style: TextStyle,
 }
 
 impl TerminalElement {
@@ -383,6 +418,7 @@ impl TerminalElement {
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
+        text_style: TextStyle,
     ) -> Self {
         TerminalElement {
             terminal,
@@ -390,6 +426,7 @@ impl TerminalElement {
             focused,
             cursor_visible,
             cached_font_family: None,
+            text_style,
         }
     }
 
@@ -399,7 +436,7 @@ impl TerminalElement {
         grid: impl Iterator<Item = IndexedCell>,
         text_style: &TextStyle,
         viewport_lines: Option<(i32, i32)>, // (start_line, end_line) for culling
-    ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
+    ) -> (Vec<LayoutRect>, Vec<BlockFragment>, Vec<BatchedTextRun>) {
         let estimated_cells = grid.size_hint().0;
         // Improved capacity estimates based on typical terminal usage
         // Most runs are 3-5 characters, so cells/4 is a good estimate
@@ -409,6 +446,7 @@ impl TerminalElement {
 
         let mut batched_runs = Vec::with_capacity(estimated_runs);
         let mut background_regions: Vec<BackgroundRegion> = Vec::with_capacity(estimated_regions);
+        let mut block_fragments: Vec<BlockFragment> = Vec::with_capacity(estimated_regions);
         let mut current_batch: Option<BatchedTextRun> = None;
 
         // Filter cells based on viewport if culling is enabled
@@ -439,7 +477,7 @@ impl TerminalElement {
                 }
 
                 if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
-                    let color = convert_color(&bg);
+                    let color = text_style.theme.resolve_color(&bg);
                     let col = cell.point.column.0 as i32;
 
                     if let Some(last_region) = background_regions.last_mut() {
@@ -468,9 +506,18 @@ impl TerminalElement {
                 previous_cell_had_extras =
                     matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
+                let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
+                if push_block_fragments(
+                    &mut block_fragments,
+                    cell_point,
+                    cell_fg_color(&cell, fg, &text_style.theme),
+                    cell.c,
+                ) {
+                    continue;
+                }
+
                 if !is_blank(&cell) {
                     let cell_style = Self::cell_style(&cell, fg, text_style);
-                    let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
                     let zero_width_chars = cell.zerowidth();
 
                     if let Some(ref mut batch) = current_batch {
@@ -530,7 +577,7 @@ impl TerminalElement {
             }
         }
 
-        (rects, batched_runs)
+        (rects, block_fragments, batched_runs)
     }
 
     /// Computes cursor position and dimensions.
@@ -561,7 +608,7 @@ impl TerminalElement {
     /// Converts Alacritty cell styles to a GPUI TextRun.
     fn cell_style(indexed: &IndexedCell, fg: AnsiColor, text_style: &TextStyle) -> TextRun {
         let flags = indexed.cell.flags;
-        let mut fg_color = convert_color(&fg);
+        let mut fg_color = text_style.theme.resolve_color(&fg);
 
         if flags.intersects(Flags::DIM) {
             fg_color.a *= 0.7;
@@ -618,10 +665,13 @@ pub struct TextStyle {
     pub foreground: Hsla,
     pub background: Hsla,
     pub line_height_multiplier: f32,
+    pub letter_spacing: f32,
+    pub theme: TerminalTheme,
 }
 
 impl Default for TextStyle {
     fn default() -> Self {
+        let theme = TerminalTheme::default();
         TextStyle {
             font: Font {
                 family: "FiraCode Nerd Font".into(),
@@ -632,15 +682,36 @@ impl Default for TextStyle {
             },
             font_size: AbsoluteLength::Pixels(px(14.0)),
             font_weight: FontWeight::NORMAL,
-            foreground: Hsla::white(),
-            // Semi-transparent background for blur effect support
-            background: Hsla {
-                h: 0.0,
-                s: 0.0,
-                l: 0.0,
-                a: 0.0, // Fully transparent - let parent handle background
-            },
+            foreground: theme.foreground,
+            // Transparent background so the parent can decide the window fill.
+            background: theme.background,
             line_height_multiplier: 1.2, // Optimized for better readability
+            letter_spacing: 0.0,
+            theme,
+        }
+    }
+}
+
+impl TextStyle {
+    pub fn from_config(config: &TerminalConfig) -> Self {
+        let theme = config.theme.to_theme();
+        let font_size = config.font_size.max(1.0);
+        let line_height = config.line_height.max(0.5);
+        TextStyle {
+            font: Font {
+                family: config.font_family.clone().into(),
+                features: gpui::FontFeatures::default(),
+                fallbacks: None,
+                weight: FontWeight::NORMAL,
+                style: FontStyle::Normal,
+            },
+            font_size: AbsoluteLength::Pixels(px(font_size)),
+            font_weight: FontWeight::NORMAL,
+            foreground: theme.foreground,
+            background: theme.background,
+            line_height_multiplier: line_height,
+            letter_spacing: config.letter_spacing,
+            theme,
         }
     }
 }
@@ -658,13 +729,8 @@ const MONO_FONT_FAMILIES: &[&str] = &[
     "DejaVu Sans Mono",
 ];
 
-fn selection_color() -> Hsla {
-    Hsla {
-        h: 0.58,
-        s: 0.32,
-        l: 0.45,
-        a: 0.35,
-    }
+fn selection_color(theme: &TerminalTheme) -> Hsla {
+    theme.selection
 }
 
 fn is_monospace_font(
@@ -773,6 +839,106 @@ fn measure_cell_width(
     let width = max_width + 0.5;
 
     px(width.ceil())
+}
+
+fn cell_fg_color(indexed: &IndexedCell, fg: AnsiColor, theme: &TerminalTheme) -> Hsla {
+    let mut fg_color = theme.resolve_color(&fg);
+    if indexed.cell.flags.intersects(Flags::DIM) {
+        fg_color.a *= 0.7;
+    }
+    fg_color
+}
+
+fn push_block_fragments(
+    out: &mut Vec<BlockFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    ch: char,
+) -> bool {
+    let rect = |x: f32, y: f32, width: f32, height: f32| BlockRect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    let mut push = |x: f32, y: f32, width: f32, height: f32| {
+        out.push(BlockFragment {
+            point,
+            rect: rect(x, y, width, height),
+            color,
+        });
+    };
+
+    match ch {
+        '\u{2588}' => {
+            push(0.0, 0.0, 1.0, 1.0);
+            true
+        }
+        '\u{2580}' => {
+            push(0.0, 0.0, 1.0, 0.5);
+            true
+        }
+        '\u{2584}' => {
+            push(0.0, 0.5, 1.0, 0.5);
+            true
+        }
+        '\u{2581}'..='\u{2587}' => {
+            let steps = ch as u32 - 0x2580;
+            let height = steps as f32 / 8.0;
+            push(0.0, 1.0 - height, 1.0, height);
+            true
+        }
+        '\u{2589}'..='\u{258F}' => {
+            let steps = 0x2590 - ch as u32;
+            let width = steps as f32 / 8.0;
+            push(0.0, 0.0, width, 1.0);
+            true
+        }
+        '\u{2590}' => {
+            push(0.5, 0.0, 0.5, 1.0);
+            true
+        }
+        '\u{2594}' => {
+            push(0.0, 0.0, 1.0, 1.0 / 8.0);
+            true
+        }
+        '\u{2595}' => {
+            push(7.0 / 8.0, 0.0, 1.0 / 8.0, 1.0);
+            true
+        }
+        '\u{2596}' | '\u{2597}' | '\u{2598}' | '\u{2599}' | '\u{259A}' | '\u{259B}'
+        | '\u{259C}' | '\u{259D}' | '\u{259E}' | '\u{259F}' => {
+            let mask = match ch {
+                '\u{2596}' => 0b0010, // lower left
+                '\u{2597}' => 0b0001, // lower right
+                '\u{2598}' => 0b1000, // upper left
+                '\u{2599}' => 0b1011, // upper left + lower left + lower right
+                '\u{259A}' => 0b1001, // upper left + lower right
+                '\u{259B}' => 0b1110, // upper left + upper right + lower left
+                '\u{259C}' => 0b1101, // upper left + upper right + lower right
+                '\u{259D}' => 0b0100, // upper right
+                '\u{259E}' => 0b0110, // upper right + lower left
+                '\u{259F}' => 0b0111, // upper right + lower left + lower right
+                _ => 0,
+            };
+
+            if mask & 0b1000 != 0 {
+                push(0.0, 0.0, 0.5, 0.5);
+            }
+            if mask & 0b0100 != 0 {
+                push(0.5, 0.0, 0.5, 0.5);
+            }
+            if mask & 0b0010 != 0 {
+                push(0.0, 0.5, 0.5, 0.5);
+            }
+            if mask & 0b0001 != 0 {
+                push(0.5, 0.5, 0.5, 0.5);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 fn selection_rects(
@@ -886,7 +1052,7 @@ impl Element for TerminalElement {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal);
 
-        let mut text_style = TextStyle::default();
+        let mut text_style = self.text_style.clone();
         let background_color = text_style.background;
 
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
@@ -901,7 +1067,8 @@ impl Element for TerminalElement {
         }
 
         let font_id = window.text_system().resolve_font(&text_style.font);
-        let cell_width = measure_cell_width(text_system, font_id, font_pixels);
+        let mut cell_width = measure_cell_width(text_system, font_id, font_pixels);
+        cell_width = (cell_width + px(text_style.letter_spacing)).max(px(1.0));
         let line_height = px(f32::from(font_pixels) * text_style.line_height_multiplier);
 
         let dimensions = TerminalBounds::new(line_height, cell_width, bounds);
@@ -923,7 +1090,7 @@ impl Element for TerminalElement {
         let mode = *mode;
         let display_offset = *display_offset;
 
-        let (rects, batched_text_runs) = Self::layout_grid(
+        let (rects, block_fragments, batched_text_runs) = Self::layout_grid(
             cells.iter().cloned(),
             &text_style,
             None, // Viewport culling disabled for now, can be enabled for large terminals
@@ -932,7 +1099,12 @@ impl Element for TerminalElement {
         let selection_rects = selection
             .as_ref()
             .map(|selection| {
-                selection_rects(selection, display_offset, &dimensions, selection_color())
+                selection_rects(
+                    selection,
+                    display_offset,
+                    &dimensions,
+                    selection_color(&text_style.theme),
+                )
             })
             .unwrap_or_default();
 
@@ -972,7 +1144,7 @@ impl Element for TerminalElement {
                         cursor_position,
                         block_width,
                         dimensions.line_height,
-                        Hsla::white(),
+                        text_style.theme.cursor,
                         shape,
                         text,
                     )
@@ -984,6 +1156,7 @@ impl Element for TerminalElement {
             hitbox,
             batched_text_runs,
             background_rects: rects,
+            block_fragments,
             selection_rects,
             cursor: cursor_layout,
             background_color,
@@ -1015,6 +1188,10 @@ impl Element for TerminalElement {
 
             for rect in &layout.background_rects {
                 rect.paint(origin, &layout.dimensions, window);
+            }
+
+            for fragment in &layout.block_fragments {
+                fragment.paint(origin, &layout.dimensions, window);
             }
 
             for rect in &layout.selection_rects {
