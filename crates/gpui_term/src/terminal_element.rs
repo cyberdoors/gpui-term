@@ -31,8 +31,8 @@ use alacritty_terminal::{
 use gpui::{
     AbsoluteLength, App, Bounds, ContentMask, Element, ElementId, Entity, FocusHandle, Font,
     FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, InputHandler, IntoElement, LayoutId,
-    Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UTF16Selection, UnderlineStyle,
-    Window, fill, point, px, size,
+    PathBuilder, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UTF16Selection,
+    UnderlineStyle, Window, fill, point, px, size,
 };
 use itertools::Itertools;
 
@@ -44,6 +44,7 @@ pub struct LayoutState {
     batched_text_runs: Vec<BatchedTextRun>,
     background_rects: Vec<LayoutRect>,
     block_fragments: Vec<BlockFragment>,
+    polygon_fragments: Vec<PolygonFragment>,
     selection_rects: Vec<LayoutRect>,
     cursor: Option<CursorLayout>,
     background_color: Hsla,
@@ -228,6 +229,44 @@ impl BlockFragment {
             dimensions.line_height * self.rect.height,
         );
         window.paint_quad(fill(Bounds::new(position, rect_size), self.color));
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BlockPoint {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PolygonFragment {
+    point: AlacPoint<i32, i32>,
+    points: [BlockPoint; 3],
+    color: Hsla,
+}
+
+impl PolygonFragment {
+    fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalBounds, window: &mut Window) {
+        let cell_origin = point(
+            origin.x + self.point.column as f32 * dimensions.cell_width,
+            origin.y + self.point.line as f32 * dimensions.line_height,
+        );
+        let to_point = |p: BlockPoint| {
+            point(
+                cell_origin.x + p.x * dimensions.cell_width,
+                cell_origin.y + p.y * dimensions.line_height,
+            )
+        };
+
+        let mut builder = PathBuilder::fill();
+        builder.move_to(to_point(self.points[0]));
+        builder.line_to(to_point(self.points[1]));
+        builder.line_to(to_point(self.points[2]));
+        builder.close();
+
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, self.color);
+        }
     }
 }
 
@@ -436,7 +475,12 @@ impl TerminalElement {
         grid: impl Iterator<Item = IndexedCell>,
         text_style: &TextStyle,
         viewport_lines: Option<(i32, i32)>, // (start_line, end_line) for culling
-    ) -> (Vec<LayoutRect>, Vec<BlockFragment>, Vec<BatchedTextRun>) {
+    ) -> (
+        Vec<LayoutRect>,
+        Vec<BlockFragment>,
+        Vec<PolygonFragment>,
+        Vec<BatchedTextRun>,
+    ) {
         let estimated_cells = grid.size_hint().0;
         // Improved capacity estimates based on typical terminal usage
         // Most runs are 3-5 characters, so cells/4 is a good estimate
@@ -447,6 +491,7 @@ impl TerminalElement {
         let mut batched_runs = Vec::with_capacity(estimated_runs);
         let mut background_regions: Vec<BackgroundRegion> = Vec::with_capacity(estimated_regions);
         let mut block_fragments: Vec<BlockFragment> = Vec::with_capacity(estimated_regions);
+        let mut polygon_fragments: Vec<PolygonFragment> = Vec::with_capacity(estimated_regions);
         let mut current_batch: Option<BatchedTextRun> = None;
 
         // Filter cells based on viewport if culling is enabled
@@ -476,8 +521,12 @@ impl TerminalElement {
                     mem::swap(&mut fg, &mut bg);
                 }
 
-                if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
-                    let color = text_style.theme.resolve_color(&bg);
+                let fg_color = cell_fg_color(&cell, fg, &text_style.theme);
+                let bg_color = text_style.theme.resolve_color(&bg);
+                if !matches!(bg, AnsiColor::Named(NamedColor::Background))
+                    && !(is_block_element_char(cell.c) && bg_color == fg_color)
+                {
+                    let color = bg_color;
                     let col = cell.point.column.0 as i32;
 
                     if let Some(last_region) = background_regions.last_mut() {
@@ -507,12 +556,21 @@ impl TerminalElement {
                     matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
                 let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
-                if push_block_fragments(
+                if push_powerline_fragments(
                     &mut block_fragments,
+                    &mut polygon_fragments,
                     cell_point,
-                    cell_fg_color(&cell, fg, &text_style.theme),
+                    fg_color,
                     cell.c,
                 ) {
+                    continue;
+                }
+
+                if push_box_fragments(&mut block_fragments, cell_point, fg_color, cell.c) {
+                    continue;
+                }
+
+                if push_block_fragments(&mut block_fragments, cell_point, fg_color, cell.c) {
                     continue;
                 }
 
@@ -577,7 +635,7 @@ impl TerminalElement {
             }
         }
 
-        (rects, block_fragments, batched_runs)
+        (rects, block_fragments, polygon_fragments, batched_runs)
     }
 
     /// Computes cursor position and dimensions.
@@ -733,6 +791,10 @@ fn selection_color(theme: &TerminalTheme) -> Hsla {
     theme.selection
 }
 
+fn is_block_element_char(ch: char) -> bool {
+    ('\u{2580}'..='\u{259F}').contains(&ch)
+}
+
 fn is_monospace_font(
     text_system: &gpui::WindowTextSystem,
     font: &Font,
@@ -849,6 +911,245 @@ fn cell_fg_color(indexed: &IndexedCell, fg: AnsiColor, theme: &TerminalTheme) ->
     fg_color
 }
 
+#[derive(Clone, Copy, Debug)]
+enum BoxWeight {
+    Light,
+    Heavy,
+    Double,
+}
+
+fn line_thickness(weight: BoxWeight) -> f32 {
+    match weight {
+        BoxWeight::Light => 1.0 / 8.0,
+        BoxWeight::Heavy => 2.0 / 8.0,
+        BoxWeight::Double => 1.0 / 10.0,
+    }
+}
+
+fn push_rect_fragment(
+    out: &mut Vec<BlockFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) {
+    out.push(BlockFragment {
+        point,
+        rect: BlockRect {
+            x,
+            y,
+            width,
+            height,
+        },
+        color,
+    });
+}
+
+fn push_horizontal_line(
+    out: &mut Vec<BlockFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    weight: BoxWeight,
+    left: bool,
+    right: bool,
+) {
+    if !left && !right {
+        return;
+    }
+
+    let thickness = line_thickness(weight);
+    let (x_start, x_end) = match (left, right) {
+        (true, true) => (0.0, 1.0),
+        (true, false) => (0.0, 0.5),
+        (false, true) => (0.5, 1.0),
+        _ => return,
+    };
+
+    let centers: [f32; 2] = if matches!(weight, BoxWeight::Double) {
+        let offset = thickness * 1.5;
+        [0.5 - offset, 0.5 + offset]
+    } else {
+        [0.5, 0.5]
+    };
+
+    for center in centers {
+        let y = (center - thickness / 2.0).max(0.0);
+        let height = (center + thickness / 2.0).min(1.0) - y;
+        push_rect_fragment(out, point, color, x_start, y, x_end - x_start, height);
+        if !matches!(weight, BoxWeight::Double) {
+            break;
+        }
+    }
+}
+
+fn push_vertical_line(
+    out: &mut Vec<BlockFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    weight: BoxWeight,
+    up: bool,
+    down: bool,
+) {
+    if !up && !down {
+        return;
+    }
+
+    let thickness = line_thickness(weight);
+    let (y_start, y_end) = match (up, down) {
+        (true, true) => (0.0, 1.0),
+        (true, false) => (0.0, 0.5),
+        (false, true) => (0.5, 1.0),
+        _ => return,
+    };
+
+    let centers: [f32; 2] = if matches!(weight, BoxWeight::Double) {
+        let offset = thickness * 1.5;
+        [0.5 - offset, 0.5 + offset]
+    } else {
+        [0.5, 0.5]
+    };
+
+    for center in centers {
+        let x = (center - thickness / 2.0).max(0.0);
+        let width = (center + thickness / 2.0).min(1.0) - x;
+        push_rect_fragment(out, point, color, x, y_start, width, y_end - y_start);
+        if !matches!(weight, BoxWeight::Double) {
+            break;
+        }
+    }
+}
+
+fn push_box_fragments(
+    out: &mut Vec<BlockFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    ch: char,
+) -> bool {
+    let (weight, left, right, up, down) = match ch {
+        '\u{2500}' => (BoxWeight::Light, true, true, false, false),
+        '\u{2502}' => (BoxWeight::Light, false, false, true, true),
+        '\u{250C}' => (BoxWeight::Light, false, true, false, true),
+        '\u{2510}' => (BoxWeight::Light, true, false, false, true),
+        '\u{2514}' => (BoxWeight::Light, false, true, true, false),
+        '\u{2518}' => (BoxWeight::Light, true, false, true, false),
+        '\u{251C}' => (BoxWeight::Light, false, true, true, true),
+        '\u{2524}' => (BoxWeight::Light, true, false, true, true),
+        '\u{252C}' => (BoxWeight::Light, true, true, false, true),
+        '\u{2534}' => (BoxWeight::Light, true, true, true, false),
+        '\u{253C}' => (BoxWeight::Light, true, true, true, true),
+        '\u{2574}' => (BoxWeight::Light, true, false, false, false),
+        '\u{2575}' => (BoxWeight::Light, false, false, true, false),
+        '\u{2576}' => (BoxWeight::Light, false, true, false, false),
+        '\u{2577}' => (BoxWeight::Light, false, false, false, true),
+        '\u{256D}' => (BoxWeight::Light, false, true, false, true),
+        '\u{256E}' => (BoxWeight::Light, true, false, false, true),
+        '\u{256F}' => (BoxWeight::Light, true, false, true, false),
+        '\u{2570}' => (BoxWeight::Light, false, true, true, false),
+        '\u{2501}' => (BoxWeight::Heavy, true, true, false, false),
+        '\u{2503}' => (BoxWeight::Heavy, false, false, true, true),
+        '\u{250F}' => (BoxWeight::Heavy, false, true, false, true),
+        '\u{2513}' => (BoxWeight::Heavy, true, false, false, true),
+        '\u{2517}' => (BoxWeight::Heavy, false, true, true, false),
+        '\u{251B}' => (BoxWeight::Heavy, true, false, true, false),
+        '\u{2523}' => (BoxWeight::Heavy, false, true, true, true),
+        '\u{252B}' => (BoxWeight::Heavy, true, false, true, true),
+        '\u{2533}' => (BoxWeight::Heavy, true, true, false, true),
+        '\u{253B}' => (BoxWeight::Heavy, true, true, true, false),
+        '\u{254B}' => (BoxWeight::Heavy, true, true, true, true),
+        '\u{2550}' => (BoxWeight::Double, true, true, false, false),
+        '\u{2551}' => (BoxWeight::Double, false, false, true, true),
+        '\u{2554}' => (BoxWeight::Double, false, true, false, true),
+        '\u{2557}' => (BoxWeight::Double, true, false, false, true),
+        '\u{255A}' => (BoxWeight::Double, false, true, true, false),
+        '\u{255D}' => (BoxWeight::Double, true, false, true, false),
+        '\u{2560}' => (BoxWeight::Double, false, true, true, true),
+        '\u{2563}' => (BoxWeight::Double, true, false, true, true),
+        '\u{2566}' => (BoxWeight::Double, true, true, false, true),
+        '\u{2569}' => (BoxWeight::Double, true, true, true, false),
+        '\u{256C}' => (BoxWeight::Double, true, true, true, true),
+        _ => return false,
+    };
+
+    push_horizontal_line(out, point, color, weight, left, right);
+    push_vertical_line(out, point, color, weight, up, down);
+    true
+}
+
+fn push_powerline_fragments(
+    rects: &mut Vec<BlockFragment>,
+    polys: &mut Vec<PolygonFragment>,
+    point: AlacPoint<i32, i32>,
+    color: Hsla,
+    ch: char,
+) -> bool {
+    match ch {
+        '\u{E0B0}' => {
+            polys.push(PolygonFragment {
+                point,
+                points: [
+                    BlockPoint { x: 0.0, y: 0.0 },
+                    BlockPoint { x: 1.0, y: 0.5 },
+                    BlockPoint { x: 0.0, y: 1.0 },
+                ],
+                color,
+            });
+            true
+        }
+        '\u{E0B2}' => {
+            polys.push(PolygonFragment {
+                point,
+                points: [
+                    BlockPoint { x: 1.0, y: 0.0 },
+                    BlockPoint { x: 0.0, y: 0.5 },
+                    BlockPoint { x: 1.0, y: 1.0 },
+                ],
+                color,
+            });
+            true
+        }
+        '\u{E0B1}' | '\u{E0B3}' | '\u{E0B5}' | '\u{E0B7}' => {
+            let thickness = line_thickness(BoxWeight::Light);
+            push_rect_fragment(
+                rects,
+                point,
+                color,
+                0.5 - thickness / 2.0,
+                0.0,
+                thickness,
+                1.0,
+            );
+            true
+        }
+        '\u{E0B4}' => {
+            polys.push(PolygonFragment {
+                point,
+                points: [
+                    BlockPoint { x: 0.0, y: 0.0 },
+                    BlockPoint { x: 1.0, y: 0.5 },
+                    BlockPoint { x: 0.0, y: 1.0 },
+                ],
+                color,
+            });
+            true
+        }
+        '\u{E0B6}' => {
+            polys.push(PolygonFragment {
+                point,
+                points: [
+                    BlockPoint { x: 1.0, y: 0.0 },
+                    BlockPoint { x: 0.0, y: 0.5 },
+                    BlockPoint { x: 1.0, y: 1.0 },
+                ],
+                color,
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
 fn push_block_fragments(
     out: &mut Vec<BlockFragment>,
     point: AlacPoint<i32, i32>,
@@ -871,6 +1172,33 @@ fn push_block_fragments(
     };
 
     match ch {
+        '\u{2591}' => {
+            let mut shade = color;
+            shade.a *= 0.25;
+            push(0.0, 0.0, 1.0, 1.0);
+            if let Some(fragment) = out.last_mut() {
+                fragment.color = shade;
+            }
+            true
+        }
+        '\u{2592}' => {
+            let mut shade = color;
+            shade.a *= 0.5;
+            push(0.0, 0.0, 1.0, 1.0);
+            if let Some(fragment) = out.last_mut() {
+                fragment.color = shade;
+            }
+            true
+        }
+        '\u{2593}' => {
+            let mut shade = color;
+            shade.a *= 0.75;
+            push(0.0, 0.0, 1.0, 1.0);
+            if let Some(fragment) = out.last_mut() {
+                fragment.color = shade;
+            }
+            true
+        }
         '\u{2588}' => {
             push(0.0, 0.0, 1.0, 1.0);
             true
@@ -1090,7 +1418,7 @@ impl Element for TerminalElement {
         let mode = *mode;
         let display_offset = *display_offset;
 
-        let (rects, block_fragments, batched_text_runs) = Self::layout_grid(
+        let (rects, block_fragments, polygon_fragments, batched_text_runs) = Self::layout_grid(
             cells.iter().cloned(),
             &text_style,
             None, // Viewport culling disabled for now, can be enabled for large terminals
@@ -1157,6 +1485,7 @@ impl Element for TerminalElement {
             batched_text_runs,
             background_rects: rects,
             block_fragments,
+            polygon_fragments,
             selection_rects,
             cursor: cursor_layout,
             background_color,
@@ -1191,6 +1520,10 @@ impl Element for TerminalElement {
             }
 
             for fragment in &layout.block_fragments {
+                fragment.paint(origin, &layout.dimensions, window);
+            }
+
+            for fragment in &layout.polygon_fragments {
                 fragment.paint(origin, &layout.dimensions, window);
             }
 
