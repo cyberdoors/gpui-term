@@ -52,7 +52,9 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-b", ToggleSidebar, None),
             KeyBinding::new("cmd-c", Copy, Some("Terminal")),
+            KeyBinding::new("ctrl-shift-c", Copy, Some("Terminal")),
             KeyBinding::new("cmd-v", Paste, Some("Terminal")),
+            KeyBinding::new("ctrl-shift-v", Paste, Some("Terminal")),
             KeyBinding::new("cmd-a", SelectAll, Some("Terminal")),
             KeyBinding::new("cmd-k", Clear, Some("Terminal")),
         ]);

@@ -145,6 +145,21 @@ impl TerminalView {
         window.focus(&self.focus_handle, cx);
         window.prevent_default();
 
+        if event.button == MouseButton::Right {
+            let mouse_mode = self.terminal.read(cx).mouse_mode(event.modifiers.shift);
+            if !mouse_mode {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        self.terminal.update(cx, |terminal, _| {
+                            terminal.paste(&text);
+                        });
+                    }
+                }
+                cx.notify();
+                return;
+            }
+        }
+
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_down(event, cx);
         });
@@ -195,7 +210,7 @@ impl TerminalView {
 
     fn copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |terminal, _| {
-            terminal.copy(None);
+            terminal.copy(Some(true));
         });
 
         if let Some(text) = self.terminal.read(cx).last_content.selection_text.clone() {

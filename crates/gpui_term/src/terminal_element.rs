@@ -24,6 +24,7 @@ use std::mem;
 
 use alacritty_terminal::{
     index::Point as AlacPoint,
+    selection::SelectionRange,
     term::{TermMode, cell::Flags},
     vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor},
 };
@@ -42,6 +43,7 @@ pub struct LayoutState {
     hitbox: Hitbox,
     batched_text_runs: Vec<BatchedTextRun>,
     background_rects: Vec<LayoutRect>,
+    selection_rects: Vec<LayoutRect>,
     cursor: Option<CursorLayout>,
     background_color: Hsla,
     dimensions: TerminalBounds,
@@ -656,6 +658,15 @@ const MONO_FONT_FAMILIES: &[&str] = &[
     "DejaVu Sans Mono",
 ];
 
+fn selection_color() -> Hsla {
+    Hsla {
+        h: 0.58,
+        s: 0.32,
+        l: 0.45,
+        a: 0.35,
+    }
+}
+
 fn is_monospace_font(
     text_system: &gpui::WindowTextSystem,
     font: &Font,
@@ -764,6 +775,78 @@ fn measure_cell_width(
     px(width.ceil())
 }
 
+fn selection_rects(
+    selection: &SelectionRange,
+    display_offset: usize,
+    dimensions: &TerminalBounds,
+    color: Hsla,
+) -> Vec<LayoutRect> {
+    let num_lines = dimensions.num_lines() as i32;
+    let num_columns = dimensions.num_columns();
+
+    if num_lines <= 0 || num_columns == 0 {
+        return Vec::new();
+    }
+
+    let max_line = num_lines - 1;
+    let max_col = num_columns.saturating_sub(1) as i32;
+
+    let mut start_line = selection.start.line.0 + display_offset as i32;
+    let mut end_line = selection.end.line.0 + display_offset as i32;
+
+    if start_line > end_line {
+        mem::swap(&mut start_line, &mut end_line);
+    }
+
+    if end_line < 0 || start_line > max_line {
+        return Vec::new();
+    }
+
+    start_line = start_line.max(0);
+    end_line = end_line.min(max_line);
+
+    let start_col = selection.start.column.0 as i32;
+    let end_col = selection.end.column.0 as i32;
+
+    let mut rects = Vec::new();
+    if selection.is_block {
+        let left = start_col.min(end_col).clamp(0, max_col);
+        let right = start_col.max(end_col).clamp(0, max_col);
+        for line in start_line..=end_line {
+            rects.push(LayoutRect::new(
+                AlacPoint::new(line, left),
+                (right - left + 1) as usize,
+                color,
+            ));
+        }
+    } else {
+        for line in start_line..=end_line {
+            let (mut col_start, mut col_end) = if line == start_line && line == end_line {
+                (start_col, end_col)
+            } else if line == start_line {
+                (start_col, max_col)
+            } else if line == end_line {
+                (0, end_col)
+            } else {
+                (0, max_col)
+            };
+
+            col_start = col_start.clamp(0, max_col);
+            col_end = col_end.clamp(0, max_col);
+
+            if col_end >= col_start {
+                rects.push(LayoutRect::new(
+                    AlacPoint::new(line, col_start),
+                    (col_end - col_start + 1) as usize,
+                    color,
+                ));
+            }
+        }
+    }
+
+    rects
+}
+
 impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = LayoutState;
@@ -834,6 +917,7 @@ impl Element for TerminalElement {
             display_offset,
             cursor_char,
             cursor,
+            selection,
             ..
         } = &self.terminal.read(cx).last_content;
         let mode = *mode;
@@ -844,6 +928,13 @@ impl Element for TerminalElement {
             &text_style,
             None, // Viewport culling disabled for now, can be enabled for large terminals
         );
+
+        let selection_rects = selection
+            .as_ref()
+            .map(|selection| {
+                selection_rects(selection, display_offset, &dimensions, selection_color())
+            })
+            .unwrap_or_default();
 
         let cursor_layout = if let AlacCursorShape::Hidden = cursor.shape {
             None
@@ -893,6 +984,7 @@ impl Element for TerminalElement {
             hitbox,
             batched_text_runs,
             background_rects: rects,
+            selection_rects,
             cursor: cursor_layout,
             background_color,
             dimensions,
@@ -922,6 +1014,10 @@ impl Element for TerminalElement {
             let origin = bounds.origin;
 
             for rect in &layout.background_rects {
+                rect.paint(origin, &layout.dimensions, window);
+            }
+
+            for rect in &layout.selection_rects {
                 rect.paint(origin, &layout.dimensions, window);
             }
 
