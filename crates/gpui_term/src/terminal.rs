@@ -253,6 +253,78 @@ pub enum SelectionPhase {
     Ended,
 }
 
+#[cfg(windows)]
+fn find_on_path(executable: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(executable);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn find_pwsh() -> Option<String> {
+    if let Some(path) = find_on_path("pwsh.exe") {
+        return Some(path);
+    }
+
+    let roots = ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"];
+    for key in roots {
+        if let Ok(root) = std::env::var(key) {
+            for suffix in ["PowerShell\\7\\pwsh.exe", "PowerShell\\7-preview\\pwsh.exe"] {
+                let path = std::path::PathBuf::from(&root).join(suffix);
+                if path.is_file() {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    if let Ok(root) = std::env::var("LOCALAPPDATA") {
+        for suffix in [
+            "Microsoft\\PowerShell\\7\\pwsh.exe",
+            "Microsoft\\PowerShell\\7-preview\\pwsh.exe",
+        ] {
+            let path = std::path::PathBuf::from(&root).join(suffix);
+            if path.is_file() {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn default_shell_command() -> Option<String> {
+    if let Ok(shell) = std::env::var("SHELL") {
+        return Some(shell);
+    }
+
+    if let Some(pwsh) = find_pwsh() {
+        return Some(pwsh);
+    }
+
+    if let Ok(root) = std::env::var("SystemRoot") {
+        let mut path = std::path::PathBuf::from(root);
+        path.push("System32");
+        path.push("WindowsPowerShell");
+        path.push("v1.0");
+        path.push("powershell.exe");
+        return Some(path.to_string_lossy().into_owned());
+    }
+
+    Some("powershell".to_string())
+}
+
+#[cfg(not(windows))]
+fn default_shell_command() -> Option<String> {
+    std::env::var("SHELL").ok()
+}
+
 /// Factory for creating Terminal instances with PTY subscription.
 ///
 /// Handles the async PTY creation and provides the `subscribe` method
@@ -286,7 +358,7 @@ impl TerminalBuilder {
             let shell_args: Option<Vec<String>> = None;
 
             if shell_cmd.is_none() {
-                shell_cmd = std::env::var("SHELL").ok();
+                shell_cmd = default_shell_command();
             }
 
             let alac_shell =

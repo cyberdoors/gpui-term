@@ -44,6 +44,118 @@ const BORDER_SOFT_ALPHA: f32 = 0.50;
 
 const ENABLE_BLUR: bool = true;
 
+fn platform_keybindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new("ctrl-shift-c", Copy, Some("Terminal")),
+        KeyBinding::new("ctrl-shift-v", Paste, Some("Terminal")),
+    ];
+
+    #[cfg(target_os = "macos")]
+    {
+        bindings.extend([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-b", ToggleSidebar, None),
+            KeyBinding::new("cmd-c", Copy, Some("Terminal")),
+            KeyBinding::new("cmd-v", Paste, Some("Terminal")),
+            KeyBinding::new("cmd-a", SelectAll, Some("Terminal")),
+            KeyBinding::new("cmd-k", Clear, Some("Terminal")),
+        ]);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        bindings.extend([
+            KeyBinding::new("ctrl-shift-q", Quit, None),
+            KeyBinding::new("ctrl-shift-b", ToggleSidebar, None),
+            KeyBinding::new("ctrl-shift-a", SelectAll, Some("Terminal")),
+            KeyBinding::new("ctrl-shift-k", Clear, Some("Terminal")),
+        ]);
+    }
+
+    bindings
+}
+
+#[cfg(windows)]
+fn find_on_path(executable: &str) -> Option<String> {
+    let path = env::var_os("PATH")?;
+    for dir in env::split_paths(&path) {
+        let candidate = dir.join(executable);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn find_pwsh() -> Option<String> {
+    if let Some(path) = find_on_path("pwsh.exe") {
+        return Some(path);
+    }
+
+    let roots = ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"];
+    for key in roots {
+        if let Ok(root) = env::var(key) {
+            for suffix in ["PowerShell\\7\\pwsh.exe", "PowerShell\\7-preview\\pwsh.exe"] {
+                let path = std::path::PathBuf::from(&root).join(suffix);
+                if path.is_file() {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+
+    if let Ok(root) = env::var("LOCALAPPDATA") {
+        for suffix in [
+            "Microsoft\\PowerShell\\7\\pwsh.exe",
+            "Microsoft\\PowerShell\\7-preview\\pwsh.exe",
+        ] {
+            let path = std::path::PathBuf::from(&root).join(suffix);
+            if path.is_file() {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    None
+}
+
+fn platform_shell() -> Option<String> {
+    #[cfg(windows)]
+    {
+        if let Ok(shell) = env::var("SHELL") {
+            return Some(shell);
+        }
+
+        if let Some(pwsh) = find_pwsh() {
+            return Some(pwsh);
+        }
+
+        if let Ok(root) = env::var("SystemRoot") {
+            let mut path = std::path::PathBuf::from(root);
+            path.push("System32");
+            path.push("WindowsPowerShell");
+            path.push("v1.0");
+            path.push("powershell.exe");
+            return Some(path.to_string_lossy().into_owned());
+        }
+
+        return Some("powershell".to_string());
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Ok(shell) = env::var("SHELL") {
+            return Some(shell);
+        }
+        if std::path::Path::new("/bin/zsh").exists() {
+            Some("/bin/zsh".to_string())
+        } else {
+            Some("/bin/bash".to_string())
+        }
+    }
+}
+
 fn rgba_u32(rgb: u32, alpha: f32) -> u32 {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     (rgb << 8) | a
@@ -51,16 +163,7 @@ fn rgba_u32(rgb: u32, alpha: f32) -> u32 {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-b", ToggleSidebar, None),
-            KeyBinding::new("cmd-c", Copy, Some("Terminal")),
-            KeyBinding::new("ctrl-shift-c", Copy, Some("Terminal")),
-            KeyBinding::new("cmd-v", Paste, Some("Terminal")),
-            KeyBinding::new("ctrl-shift-v", Paste, Some("Terminal")),
-            KeyBinding::new("cmd-a", SelectAll, Some("Terminal")),
-            KeyBinding::new("cmd-k", Clear, Some("Terminal")),
-        ]);
+        cx.bind_keys(platform_keybindings());
 
         cx.on_action(|_: &Quit, cx| cx.quit());
 
@@ -88,7 +191,7 @@ fn main() {
                 TerminalConfig::load_or_create().unwrap_or_else(|_| TerminalConfig::default());
             let text_style = TextStyle::from_config(&terminal_config);
 
-            let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+            let shell = platform_shell();
             let mut env_vars: HashMap<String, String> = env::vars().collect();
             env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
             env_vars.insert("COLORTERM".to_string(), "truecolor".to_string());
@@ -96,7 +199,7 @@ fn main() {
             let window_id = window.window_handle().window_id().as_u64();
             let terminal_task = TerminalBuilder::new(
                 env::current_dir().ok(),
-                Some(shell),
+                shell,
                 env_vars,
                 None,
                 window_id,
