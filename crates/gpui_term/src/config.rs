@@ -140,8 +140,8 @@ impl Default for TerminalTheme {
             hsla_from_rgb(0x8A, 0x8F, 0x98),
         ];
 
-        let mut background = hsla_from_rgb(0x1E, 0x1E, 0x1E);
-        background.a = 0.0;
+        let mut background = hsla_from_rgb(0x14, 0x14, 0x14);
+        background.a = 0.22;
 
         TerminalTheme {
             foreground: hsla_from_rgb(0xD4, 0xD4, 0xD4),
@@ -149,9 +149,9 @@ impl Default for TerminalTheme {
             cursor: hsla_from_rgb(0xAE, 0xAF, 0xAD),
             selection: Hsla {
                 h: 0.58,
-                s: 0.32,
-                l: 0.45,
-                a: 0.35,
+                s: 0.36,
+                l: 0.48,
+                a: 0.55,
             },
             ansi,
             bright,

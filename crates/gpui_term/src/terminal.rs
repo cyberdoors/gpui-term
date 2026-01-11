@@ -54,6 +54,7 @@ use crate::mappings::{
         scroll_report,
     },
 };
+use crate::{InputOrigin, TerminalMiddleware};
 
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
@@ -421,6 +422,7 @@ impl TerminalBuilder {
                 breadcrumb_text: String::new(),
                 scroll_px: px(0.),
                 selection_phase: SelectionPhase::Ended,
+                middlewares: Vec::new(),
                 event_loop_task: Task::ready(Ok(())),
             };
 
@@ -509,23 +511,72 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     scroll_px: Pixels,
     selection_phase: SelectionPhase,
+    middlewares: Vec<Arc<dyn TerminalMiddleware>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
 }
 
 impl Terminal {
-    /// Writes bytes to the PTY.
-    fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        if let Some(pty_tx) = &self.pty_tx {
-            pty_tx.notify(input.into());
+    /// Adds a middleware instance to the terminal pipeline.
+    pub fn add_middleware(&mut self, middleware: Arc<dyn TerminalMiddleware>) {
+        self.middlewares.push(middleware);
+    }
+
+    /// Replaces the middleware pipeline with a new list.
+    pub fn set_middlewares(&mut self, middlewares: Vec<Arc<dyn TerminalMiddleware>>) {
+        self.middlewares = middlewares;
+    }
+
+    fn apply_input_middlewares(
+        &self,
+        mut input: Cow<'static, [u8]>,
+        origin: InputOrigin,
+    ) -> Option<Cow<'static, [u8]>> {
+        for middleware in &self.middlewares {
+            input = middleware.on_input(input, origin)?;
         }
+        Some(input)
+    }
+
+    fn notify_middlewares_event(&self, event: &Event) {
+        for middleware in &self.middlewares {
+            middleware.on_event(event);
+        }
+    }
+
+    fn notify_middlewares_output(&self, content: &TerminalContent) {
+        for middleware in &self.middlewares {
+            middleware.on_output(content);
+        }
+    }
+
+    /// Writes bytes to the PTY after passing through middlewares.
+    fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>, origin: InputOrigin) -> bool {
+        let Some(filtered) = self.apply_input_middlewares(input.into(), origin) else {
+            return false;
+        };
+
+        if let Some(pty_tx) = &self.pty_tx {
+            pty_tx.notify(filtered);
+        }
+        true
     }
 
     /// Sends input to the terminal, scrolling to bottom and clearing selection.
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-        self.write_to_pty(input);
+        self.input_with_origin(input, InputOrigin::Programmatic);
+    }
+
+    /// Sends input to the terminal with origin metadata.
+    pub fn input_with_origin(
+        &mut self,
+        input: impl Into<Cow<'static, [u8]>>,
+        origin: InputOrigin,
+    ) {
+        if self.write_to_pty(input, origin) {
+            self.events
+                .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+            self.events.push_back(InternalEvent::SetSelection(None));
+        }
     }
 
     /// Attempts to handle a keystroke, returning true if handled.
@@ -536,8 +587,12 @@ impl Terminal {
         let esc = to_esc_str(keystroke, &self.last_content.mode, option_as_meta);
         if let Some(esc) = esc {
             match esc {
-                Cow::Borrowed(string) => self.input(string.as_bytes()),
-                Cow::Owned(string) => self.input(string.into_bytes()),
+                Cow::Borrowed(string) => {
+                    self.input_with_origin(string.as_bytes(), InputOrigin::Keystroke)
+                }
+                Cow::Owned(string) => {
+                    self.input_with_origin(string.into_bytes(), InputOrigin::Keystroke)
+                }
             };
             true
         } else {
@@ -549,7 +604,7 @@ impl Terminal {
     /// Called by InputHandler when the user types regular characters.
     pub fn input_text(&mut self, text: &str) {
         if !text.is_empty() {
-            self.input(text.as_bytes().to_vec());
+            self.input_with_origin(text.as_bytes().to_vec(), InputOrigin::Text);
         }
     }
 
@@ -561,7 +616,7 @@ impl Terminal {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
 
-        self.input(paste_text.into_bytes());
+        self.input_with_origin(paste_text.into_bytes(), InputOrigin::Paste);
     }
 
     /// Resizes the terminal to new bounds.
@@ -581,6 +636,8 @@ impl Terminal {
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);
+        drop(terminal);
+        self.notify_middlewares_output(&self.last_content);
     }
 
     fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
@@ -709,7 +766,7 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
             {
-                self.write_to_pty(bytes);
+                self.write_to_pty(bytes, InputOrigin::Mouse);
             }
         } else {
             match e.button {
@@ -760,7 +817,7 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, false, self.last_content.mode)
             {
-                self.write_to_pty(bytes);
+                self.write_to_pty(bytes, InputOrigin::Mouse);
             }
         }
 
@@ -782,7 +839,7 @@ impl Terminal {
                 if let Some(bytes) =
                     mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
                 {
-                    self.write_to_pty(bytes);
+                    self.write_to_pty(bytes, InputOrigin::Mouse);
                 }
             }
         }
@@ -846,7 +903,7 @@ impl Terminal {
                 if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
-                        self.write_to_pty(scroll);
+                        self.write_to_pty(scroll, InputOrigin::Scroll);
                     }
                 }
             } else if self
@@ -855,7 +912,7 @@ impl Terminal {
                 .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                 && !e.shift
             {
-                self.write_to_pty(alt_scroll(scroll_lines));
+                self.write_to_pty(alt_scroll(scroll_lines), InputOrigin::Scroll);
             } else if scroll_lines != 0 {
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -887,13 +944,13 @@ impl Terminal {
 
     pub fn focus_in(&self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[I".as_bytes());
+            self.write_to_pty("\x1b[I".as_bytes(), InputOrigin::Focus);
         }
     }
 
     pub fn focus_out(&mut self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[O".as_bytes());
+            self.write_to_pty("\x1b[O".as_bytes(), InputOrigin::Focus);
         }
     }
 
@@ -901,11 +958,15 @@ impl Terminal {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title;
-                cx.emit(Event::TitleChanged);
+                let event = Event::TitleChanged;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::ResetTitle => {
                 self.breadcrumb_text = String::new();
-                cx.emit(Event::TitleChanged);
+                let event = Event::TitleChanged;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(data));
@@ -917,33 +978,47 @@ impl Terminal {
                         _ => format(""),
                     }
                     .into_bytes(),
+                    InputOrigin::Clipboard,
                 );
             }
             AlacTermEvent::PtyWrite(out) => {
-                self.write_to_pty(out.into_bytes());
+                self.write_to_pty(out.into_bytes(), InputOrigin::System);
             }
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.write_to_pty(format(self.last_content.terminal_bounds.into()).into_bytes());
+                self.write_to_pty(
+                    format(self.last_content.terminal_bounds.into()).into_bytes(),
+                    InputOrigin::System,
+                );
             }
             AlacTermEvent::CursorBlinkingChange => {
-                let terminal = self.term.lock();
-                let blinking = terminal.cursor_style().blinking;
-                cx.emit(Event::BlinkChanged(blinking));
+                let blinking = {
+                    let terminal = self.term.lock();
+                    terminal.cursor_style().blinking
+                };
+                let event = Event::BlinkChanged(blinking);
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::Bell => {
-                cx.emit(Event::Bell);
+                let event = Event::Bell;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::Exit | AlacTermEvent::ChildExit(_) => {
-                cx.emit(Event::CloseTerminal);
+                let event = Event::CloseTerminal;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::Wakeup => {
-                cx.emit(Event::Wakeup);
+                let event = Event::Wakeup;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             AlacTermEvent::MouseCursorDirty => {}
             AlacTermEvent::ColorRequest(index, format) => {
                 let color = self.term.lock().colors()[index]
                     .unwrap_or(alacritty_terminal::vte::ansi::Rgb { r: 0, g: 0, b: 0 });
-                self.write_to_pty(format(color).into_bytes());
+                self.write_to_pty(format(color).into_bytes(), InputOrigin::System);
             }
         }
     }
@@ -993,7 +1068,9 @@ impl Terminal {
                     term.grid_mut().reset_region((new_cursor.line + 1)..);
                 }
 
-                cx.emit(Event::Wakeup);
+                let event = Event::Wakeup;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
@@ -1007,7 +1084,9 @@ impl Terminal {
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
-                cx.emit(Event::SelectionsChanged);
+                let event = Event::SelectionsChanged;
+                self.notify_middlewares_event(&event);
+                cx.emit(event);
             }
             InternalEvent::UpdateSelection(position) => {
                 if let Some(mut selection) = term.selection.take() {
@@ -1021,7 +1100,9 @@ impl Terminal {
                     term.selection = Some(selection);
 
                     self.selection_head = Some(point);
-                    cx.emit(Event::SelectionsChanged);
+                    let event = Event::SelectionsChanged;
+                    self.notify_middlewares_event(&event);
+                    cx.emit(event);
                 }
             }
             InternalEvent::Copy(keep_selection) => {

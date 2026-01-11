@@ -741,7 +741,7 @@ impl Default for TextStyle {
             font_size: AbsoluteLength::Pixels(px(14.0)),
             font_weight: FontWeight::NORMAL,
             foreground: theme.foreground,
-            // Transparent background so the parent can decide the window fill.
+            // Semi-transparent background so the parent can decide the window fill.
             background: theme.background,
             line_height_multiplier: 1.2, // Optimized for better readability
             letter_spacing: 0.0,

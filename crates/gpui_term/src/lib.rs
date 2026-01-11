@@ -3,8 +3,10 @@ mod terminal;
 mod config;
 mod terminal_element;
 mod terminal_view;
+mod middleware;
 
 pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig};
+pub use middleware::{InputOrigin, TerminalMiddleware};
 pub use terminal::{
     Event, IndexedCell, Terminal, TerminalBounds, TerminalBuilder, TerminalContent, ZedListener,
 };

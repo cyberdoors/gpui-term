@@ -5,8 +5,10 @@
 //! - Main terminal content padded to avoid the sidebar
 //! - Transparent/blurred window background
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
+use std::sync::{Arc, Mutex};
 
 use gpui::{
     App, AppContext, Application, BoxShadow, Context, Entity, FocusHandle, Focusable,
@@ -16,8 +18,8 @@ use gpui::{
     rgb, rgba,
 };
 use gpui_term::{
-    Clear, Copy, Paste, SelectAll, Terminal, TerminalBuilder, TerminalConfig, TerminalView,
-    TextStyle,
+    Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal, TerminalBuilder, TerminalConfig,
+    TerminalContent, TerminalMiddleware, TerminalView, TextStyle,
 };
 
 actions!(agent_term, [Quit, ToggleSidebar]);
@@ -38,11 +40,102 @@ const SURFACE_ROOT: u32 = 0x000000;
 const SURFACE_SIDEBAR: u32 = 0x202020;
 const BORDER_SOFT: u32 = 0x3a3a3a;
 
-const SURFACE_ROOT_ALPHA: f32 = 0.05;
-const SURFACE_SIDEBAR_ALPHA: f32 = 0.32;
+const SURFACE_ROOT_ALPHA: f32 = 0.12;
+const SURFACE_SIDEBAR_ALPHA: f32 = 0.4;
 const BORDER_SOFT_ALPHA: f32 = 0.50;
 
 const ENABLE_BLUR: bool = true;
+
+struct LoggingMiddleware {
+    last_output: Mutex<Option<String>>,
+}
+
+impl LoggingMiddleware {
+    fn new() -> Self {
+        Self {
+            last_output: Mutex::new(None),
+        }
+    }
+}
+
+fn format_input_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            0x1b => out.push_str("\\x1b"),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\x{:02x}", b)),
+        }
+    }
+    out
+}
+
+fn content_to_string(content: &TerminalContent) -> String {
+    let rows = content.terminal_bounds.num_lines();
+    let cols = content.terminal_bounds.num_columns();
+    let mut grid = vec![vec![' '; cols]; rows];
+
+    for cell in &content.cells {
+        let row = cell.point.line.0;
+        let col = cell.point.column.0;
+        if row >= 0 {
+            let row = row as usize;
+            let col = col as usize;
+            if row < rows && col < cols {
+                grid[row][col] = cell.c;
+            }
+        }
+    }
+
+    let mut lines: Vec<String> = grid
+        .into_iter()
+        .map(|line| {
+            let mut s: String = line.into_iter().collect();
+            while s.ends_with(' ') {
+                s.pop();
+            }
+            s
+        })
+        .collect();
+
+    while matches!(lines.last(), Some(line) if line.is_empty()) {
+        lines.pop();
+    }
+
+    lines.join("\n")
+}
+
+impl TerminalMiddleware for LoggingMiddleware {
+    fn on_input(
+        &self,
+        input: Cow<'static, [u8]>,
+        origin: InputOrigin,
+    ) -> Option<Cow<'static, [u8]>> {
+        let display = format_input_bytes(&input);
+        eprintln!("[middleware] input origin={:?} {}", origin, display);
+        Some(input)
+    }
+
+    fn on_event(&self, event: &Event) {
+        eprintln!("[middleware] event {:?}", event);
+    }
+
+    fn on_output(&self, content: &TerminalContent) {
+        let output = content_to_string(content);
+        let mut guard = match self.last_output.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if guard.as_ref() != Some(&output) {
+            eprintln!("[middleware] output\n{}", output);
+            *guard = Some(output);
+        }
+    }
+}
 
 fn platform_keybindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
@@ -252,6 +345,9 @@ fn main() {
                 let _ = cx.update_window(window_handle, |_, window, cx| {
                     let _ = view_clone.update(cx, |app, cx| {
                         let terminal = cx.new(|cx| builder.subscribe(cx));
+                        terminal.update(cx, |terminal, _| {
+                            terminal.add_middleware(Arc::new(LoggingMiddleware::new()));
+                        });
                         app.set_terminal(terminal, window, cx);
                     });
                 });
