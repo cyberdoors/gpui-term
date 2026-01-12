@@ -35,8 +35,8 @@
 //! });
 //! ```
 
-use crate::TerminalTheme;
 use gpui::{App, Hsla};
+use gpui_term::TerminalTheme;
 
 /// Adapter for converting gpui-component themes to terminal themes.
 pub struct ThemeAdapter;
@@ -61,7 +61,6 @@ impl ThemeAdapter {
     /// # Returns
     ///
     /// A fully configured TerminalTheme with colors derived from the component theme.
-    #[cfg(feature = "gpui-component")]
     pub fn to_terminal_theme(component_theme: &gpui_component::ThemeColor) -> TerminalTheme {
         use gpui_component::Colorize;
 
@@ -148,7 +147,6 @@ impl ThemeAdapter {
     /// Creates a terminal theme from the global gpui-component theme.
     ///
     /// This is a convenience method that accesses the global Theme and converts it.
-    #[cfg(feature = "gpui-component")]
     pub fn from_global_theme(cx: &App) -> TerminalTheme {
         let theme = gpui_component::ActiveTheme::theme(cx);
         Self::to_terminal_theme(&theme.colors)
@@ -157,32 +155,31 @@ impl ThemeAdapter {
     // Default ANSI colors (fallback when component theme doesn't define them)
 
     fn default_red() -> Hsla {
-        crate::hsla_from_rgb(0xE0, 0x6C, 0x75)
+        gpui_term::hsla_from_rgb(0xE0, 0x6C, 0x75)
     }
 
     fn default_green() -> Hsla {
-        crate::hsla_from_rgb(0x98, 0xC3, 0x79)
+        gpui_term::hsla_from_rgb(0x98, 0xC3, 0x79)
     }
 
     fn default_yellow() -> Hsla {
-        crate::hsla_from_rgb(0xE5, 0xC0, 0x7B)
+        gpui_term::hsla_from_rgb(0xE5, 0xC0, 0x7B)
     }
 
     fn default_blue() -> Hsla {
-        crate::hsla_from_rgb(0x61, 0xAF, 0xEF)
+        gpui_term::hsla_from_rgb(0x61, 0xAF, 0xEF)
     }
 
     fn default_magenta() -> Hsla {
-        crate::hsla_from_rgb(0xC6, 0x78, 0xDD)
+        gpui_term::hsla_from_rgb(0xC6, 0x78, 0xDD)
     }
 
     fn default_cyan() -> Hsla {
-        crate::hsla_from_rgb(0x56, 0xB6, 0xC2)
+        gpui_term::hsla_from_rgb(0x56, 0xB6, 0xC2)
     }
 }
 
 /// Extension trait for TerminalView to apply component themes.
-#[cfg(feature = "gpui-component")]
 pub trait ComponentThemeExt {
     /// Applies the current gpui-component theme to the terminal view.
     ///
@@ -200,8 +197,7 @@ pub trait ComponentThemeExt {
         Self: Sized;
 }
 
-#[cfg(feature = "gpui-component")]
-impl ComponentThemeExt for crate::TerminalView {
+impl ComponentThemeExt for gpui_term::TerminalView {
     fn apply_component_theme(&mut self, cx: &mut gpui::Context<Self>) {
         let terminal_theme = ThemeAdapter::from_global_theme(cx);
         let text_style = self.text_style_mut();
@@ -226,7 +222,6 @@ impl ComponentThemeExt for crate::TerminalView {
 ///
 /// This trait provides methods to safely extract optional base colors
 /// from the component theme.
-#[cfg(feature = "gpui-component")]
 trait BaseColorExt {
     fn base_black(&self) -> Option<Hsla>;
     fn base_red(&self) -> Option<Hsla>;
@@ -244,7 +239,6 @@ trait BaseColorExt {
     fn base_cyan_light(&self) -> Option<Hsla>;
 }
 
-#[cfg(feature = "gpui-component")]
 impl BaseColorExt for gpui_component::ThemeColor {
     fn base_black(&self) -> Option<Hsla> {
         // gpui-component doesn't have explicit base_black, use background

@@ -3,6 +3,8 @@
 //! This example demonstrates how to integrate gpui-term with gpui-component's
 //! theme system, showing automatic theme synchronization and switching.
 
+mod theme_adapter;
+
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -22,9 +24,11 @@ use gpui_component::{
 };
 
 use gpui_term::{
-    Clear, ComponentThemeExt, Copy, Event, InputOrigin, Paste, SelectAll, Terminal,
+    Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal,
     TerminalBuilder, TerminalContent, TerminalMiddleware, TerminalView,
 };
+
+use theme_adapter::ComponentThemeExt;
 
 actions!(component_integration, [Quit, ToggleDarkMode]);
 

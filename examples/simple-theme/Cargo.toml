@@ -1,0 +1,15 @@
+[package]
+name = "simple-theme"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "simple-theme"
+path = "src/main.rs"
+
+[dependencies]
+gpui_term = { path = "../../crates/gpui_term" }
+gpui.workspace = true
+anyhow.workspace = true
+env_logger = "0.11"

@@ -6,9 +6,6 @@ mod terminal_element;
 mod terminal_view;
 mod theme_manager;
 
-#[cfg(feature = "gpui-component")]
-mod theme_adapter;
-
 pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig, hsla_from_rgb};
 pub use middleware::{InputOrigin, TerminalMiddleware};
 pub use terminal::{
@@ -21,5 +18,3 @@ pub use terminal_view::{
 };
 pub use theme_manager::{ThemeDefinition, ThemeManager};
 
-#[cfg(feature = "gpui-component")]
-pub use theme_adapter::{ComponentThemeExt, ThemeAdapter};

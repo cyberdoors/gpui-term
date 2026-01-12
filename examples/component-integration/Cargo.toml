@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
-gpui_term = { path = "../../crates/gpui_term", features = ["gpui-component"] }
+gpui_term = { path = "../../crates/gpui_term" }
 gpui-component = { path = "../../../gpui-component/crates/ui" }
 anyhow.workspace = true
 log.workspace = true
