@@ -26,7 +26,7 @@ use gpui::{
     ScrollWheelEvent, Styled, Window, actions, div,
 };
 
-use crate::{Event, Terminal, TerminalElement};
+use crate::{Event, Terminal, TerminalElement, TextStyle, ThemeManager};
 
 actions!(
     terminal,
@@ -38,7 +38,8 @@ actions!(
         ScrollLineUp,
         ScrollLineDown,
         ScrollPageUp,
-        ScrollPageDown
+        ScrollPageDown,
+        ChangeTheme
     ]
 );
 
@@ -120,6 +121,26 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Updates the theme by applying a new theme from the ThemeManager.
+    ///
+    /// This updates the text_style with the new theme colors while preserving
+    /// font settings.
+    pub fn set_theme(&mut self, theme_name: &str, cx: &mut Context<Self>) {
+        if let Some(theme_manager) = cx.try_global::<ThemeManager>()
+            && let Some(theme) = theme_manager.get_theme(theme_name)
+        {
+            self.text_style.theme = theme.clone();
+            self.text_style.foreground = theme.foreground;
+            self.text_style.background = theme.background;
+            cx.notify();
+        }
+    }
+
+    /// Returns a mutable reference to the text style for external updates.
+    pub fn text_style_mut(&mut self) -> &mut TextStyle {
+        &mut self.text_style
+    }
+
     fn handle_terminal_event(&mut self, event: &Event, cx: &mut Context<Self>) {
         match event {
             Event::Wakeup => cx.notify(),
@@ -160,12 +181,12 @@ impl TerminalView {
         if event.button == MouseButton::Right {
             let mouse_mode = self.terminal.read(cx).mouse_mode(event.modifiers.shift);
             if !mouse_mode {
-                if let Some(item) = cx.read_from_clipboard() {
-                    if let Some(text) = item.text() {
-                        self.terminal.update(cx, |terminal, _| {
-                            terminal.paste(&text);
-                        });
-                    }
+                if let Some(item) = cx.read_from_clipboard()
+                    && let Some(text) = item.text()
+                {
+                    self.terminal.update(cx, |terminal, _| {
+                        terminal.paste(&text);
+                    });
                 }
                 cx.notify();
                 return;
@@ -232,12 +253,12 @@ impl TerminalView {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
-            if let Some(text) = item.text() {
-                self.terminal.update(cx, |terminal, _| {
-                    terminal.paste(&text);
-                });
-            }
+        if let Some(item) = cx.read_from_clipboard()
+            && let Some(text) = item.text()
+        {
+            self.terminal.update(cx, |terminal, _| {
+                terminal.paste(&text);
+            });
         }
     }
 

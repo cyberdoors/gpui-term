@@ -347,7 +347,7 @@ fn rgba_from_rgb(rgb: Rgb) -> Rgba {
     }
 }
 
-fn hsla_from_rgb(r: u8, g: u8, b: u8) -> Hsla {
+pub fn hsla_from_rgb(r: u8, g: u8, b: u8) -> Hsla {
     let rgba = Rgba {
         r: r as f32 / 255.0,
         g: g as f32 / 255.0,

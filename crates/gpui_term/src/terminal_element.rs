@@ -36,7 +36,9 @@ use gpui::{
 };
 use itertools::Itertools;
 
-use crate::{IndexedCell, Terminal, TerminalBounds, TerminalConfig, TerminalContent, TerminalTheme};
+use crate::{
+    IndexedCell, Terminal, TerminalBounds, TerminalConfig, TerminalContent, TerminalTheme,
+};
 
 /// Layout state computed during prepaint, used for painting.
 pub struct LayoutState {
@@ -495,14 +497,15 @@ impl TerminalElement {
         let mut current_batch: Option<BatchedTextRun> = None;
 
         // Filter cells based on viewport if culling is enabled
-        let filtered_grid: Box<dyn Iterator<Item = IndexedCell>> = if let Some((start, end)) = viewport_lines {
-            Box::new(grid.filter(move |cell| {
-                let line = cell.point.line.0 as i32;
-                line >= start && line < end
-            }))
-        } else {
-            Box::new(grid)
-        };
+        let filtered_grid: Box<dyn Iterator<Item = IndexedCell>> =
+            if let Some((start, end)) = viewport_lines {
+                Box::new(grid.filter(move |cell| {
+                    let line = cell.point.line.0;
+                    line >= start && line < end
+                }))
+            } else {
+                Box::new(grid)
+            };
 
         let linegroups = filtered_grid.into_iter().chunk_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
@@ -795,11 +798,7 @@ fn is_block_element_char(ch: char) -> bool {
     ('\u{2580}'..='\u{259F}').contains(&ch)
 }
 
-fn is_monospace_font(
-    text_system: &gpui::WindowTextSystem,
-    font: &Font,
-    font_size: Pixels,
-) -> bool {
+fn is_monospace_font(text_system: &gpui::WindowTextSystem, font: &Font, font_size: Pixels) -> bool {
     let font_id = text_system.resolve_font(font);
     let mut widths = Vec::new();
 
@@ -841,10 +840,10 @@ fn select_font_family(
         if family == base_family {
             continue;
         }
-        if available.iter().any(|name| name == family) {
-            if !candidates.iter().any(|candidate| candidate == family) {
-                candidates.push(family.to_string());
-            }
+        if available.iter().any(|name| name == family)
+            && !candidates.iter().any(|candidate| candidate == family)
+        {
+            candidates.push(family.to_string());
         }
     }
 
@@ -1535,10 +1534,10 @@ impl Element for TerminalElement {
                 batch.paint(origin, &layout.dimensions, window, cx);
             }
 
-            if self.cursor_visible {
-                if let Some(cursor) = &layout.cursor {
-                    cursor.paint(origin, window, cx);
-                }
+            if self.cursor_visible
+                && let Some(cursor) = &layout.cursor
+            {
+                cursor.paint(origin, window, cx);
             }
         });
     }

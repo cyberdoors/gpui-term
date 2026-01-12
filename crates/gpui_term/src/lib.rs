@@ -1,17 +1,25 @@
-mod mappings;
-mod terminal;
 mod config;
+mod mappings;
+mod middleware;
+mod terminal;
 mod terminal_element;
 mod terminal_view;
-mod middleware;
+mod theme_manager;
 
-pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig};
+#[cfg(feature = "gpui-component")]
+mod theme_adapter;
+
+pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig, hsla_from_rgb};
 pub use middleware::{InputOrigin, TerminalMiddleware};
 pub use terminal::{
     Event, IndexedCell, Terminal, TerminalBounds, TerminalBuilder, TerminalContent, ZedListener,
 };
 pub use terminal_element::{TerminalElement, TextStyle, convert_color};
 pub use terminal_view::{
-    Clear, Copy, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, SelectAll,
-    TerminalView,
+    ChangeTheme, Clear, Copy, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp,
+    SelectAll, TerminalView,
 };
+pub use theme_manager::{ThemeDefinition, ThemeManager};
+
+#[cfg(feature = "gpui-component")]
+pub use theme_adapter::{ComponentThemeExt, ThemeAdapter};

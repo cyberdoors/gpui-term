@@ -1,7 +1,5 @@
 use std::cmp::{self, max, min};
-use std::iter::repeat;
 
-use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint, Side};
 use alacritty_terminal::term::TermMode;
 use gpui::{Modifiers, MouseButton, Pixels, Point, ScrollWheelEvent, px};
@@ -91,7 +89,7 @@ pub fn scroll_report(
             e.modifiers,
             MouseFormat::from_mode(mode),
         )
-        .map(|report| repeat(report).take(max(scroll_lines, 1) as usize))
+        .map(|report| std::iter::repeat_n(report, max(scroll_lines, 1) as usize))
     } else {
         None
     }

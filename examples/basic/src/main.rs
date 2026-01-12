@@ -19,7 +19,7 @@ use gpui::{
 };
 use gpui_term::{
     Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal, TerminalBuilder, TerminalConfig,
-    TerminalContent, TerminalMiddleware, TerminalView, TextStyle,
+    TerminalContent, TerminalMiddleware, TerminalView, TextStyle, ThemeManager,
 };
 
 actions!(agent_term, [Quit, ToggleSidebar]);
@@ -83,7 +83,7 @@ fn content_to_string(content: &TerminalContent) -> String {
         let col = cell.point.column.0;
         if row >= 0 {
             let row = row as usize;
-            let col = col as usize;
+            let col = col;
             if row < rows && col < cols {
                 grid[row][col] = cell.c;
             }
@@ -260,6 +260,12 @@ fn main() {
 
         cx.on_action(|_: &Quit, cx| cx.quit());
 
+        // Initialize theme manager with config
+        let terminal_config =
+            TerminalConfig::load_or_create().unwrap_or_else(|_| TerminalConfig::default());
+        let theme_manager = ThemeManager::new(Some(terminal_config.theme.clone()));
+        cx.set_global(theme_manager);
+
         let background_appearance = if ENABLE_BLUR {
             WindowBackgroundAppearance::Blurred
         } else {
@@ -328,6 +334,8 @@ fn main() {
                             sessions: vec![],
                         },
                     ],
+                    show_theme_menu: false,
+                    selected_theme: "One Dark".into(),
                 }
             });
 
@@ -384,6 +392,8 @@ struct AgentTermApp {
     resize_start_width: f32,
     text_style: TextStyle,
     projects: Vec<Project>,
+    show_theme_menu: bool,
+    selected_theme: SharedString,
 }
 
 impl AgentTermApp {
@@ -394,9 +404,8 @@ impl AgentTermApp {
         cx: &mut Context<Self>,
     ) {
         let text_style = self.text_style.clone();
-        let terminal_view = cx.new(|cx| {
-            TerminalView::new_with_style(terminal.clone(), text_style, window, cx)
-        });
+        let terminal_view =
+            cx.new(|cx| TerminalView::new_with_style(terminal.clone(), text_style, window, cx));
         let focus_handle = terminal_view.read(cx).focus_handle(cx);
         focus_handle.focus(window, cx);
 
@@ -407,6 +416,28 @@ impl AgentTermApp {
 
     fn toggle_sidebar(&mut self, _: &ToggleSidebar, _window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_visible = !self.sidebar_visible;
+        cx.notify();
+    }
+
+    fn toggle_theme_menu(&mut self, cx: &mut Context<Self>) {
+        self.show_theme_menu = !self.show_theme_menu;
+        cx.notify();
+    }
+
+    fn switch_theme(&mut self, theme_name: SharedString, cx: &mut Context<Self>) {
+        self.selected_theme = theme_name.clone();
+        self.show_theme_menu = false;
+
+        // Update the theme in ThemeManager
+        ThemeManager::global_mut(cx).set_theme(&theme_name);
+
+        // Update the terminal view's theme
+        if let Some(terminal_view) = &self.terminal_view {
+            terminal_view.update(cx, |view, cx| {
+                view.set_theme(&theme_name, cx);
+            });
+        }
+
         cx.notify();
     }
 
@@ -491,6 +522,9 @@ impl AgentTermApp {
                     .shadow(Self::sidebar_shadow())
                     .child(self.render_sidebar_content(cx)),
             )
+            .when(self.show_theme_menu, |el| {
+                el.child(self.render_theme_menu(cx))
+            })
             .child(
                 div()
                     .id("sidebar-resizer")
@@ -509,18 +543,18 @@ impl AgentTermApp {
             )
     }
 
-    fn render_sidebar_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("sidebar-content")
             .size_full()
             .flex()
             .flex_col()
-            .child(self.render_sidebar_header())
+            .child(self.render_sidebar_header(cx))
             .child(self.render_add_project())
             .child(self.render_project_tree())
     }
 
-    fn render_sidebar_header(&self) -> impl IntoElement {
+    fn render_sidebar_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .h(px(44.0))
             .pl(px(SIDEBAR_HEADER_LEFT_PADDING))
@@ -543,8 +577,88 @@ impl AgentTermApp {
                     .gap(px(12.0))
                     .child(icon_button("icons/search.svg"))
                     .child(icon_button("icons/tag.svg"))
-                    .child(icon_button("icons/settings.svg")),
+                    .child(self.render_theme_button(cx)),
             )
+    }
+
+    fn render_theme_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(20.0))
+            .h(px(20.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .text_color(rgb(TEXT_SUBTLE))
+            .hover(|s| s.text_color(rgb(TEXT_PRIMARY)).bg(rgba(0xffffff10)))
+            .child("◐")
+            .when(self.show_theme_menu, |s| s.bg(rgba(0xffffff20)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.toggle_theme_menu(cx);
+                }),
+            )
+    }
+
+    fn render_theme_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme_manager = ThemeManager::global(cx);
+        let available_themes = theme_manager.available_themes();
+
+        div()
+            .absolute()
+            .top(px(52.0))
+            .right(px(16.0))
+            .min_w(px(180.0))
+            .max_w(px(220.0))
+            .rounded(px(8.0))
+            .bg(rgba(rgba_u32(SURFACE_SIDEBAR, 0.95)))
+            .border_1()
+            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+            .shadow(Self::sidebar_shadow())
+            .py(px(4.0))
+            .child({
+                let mut menu = div();
+                for theme_name in available_themes {
+                    let is_selected = theme_name == self.selected_theme.as_ref();
+                    let theme_name_shared: SharedString = theme_name.clone().into();
+                    menu = menu.child(
+                        div()
+                            .px(px(12.0))
+                            .py(px(6.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgba(0xffffff10)))
+                            .when(is_selected, |s| s.bg(rgba(0xffffff15)))
+                            .on_mouse_down(MouseButton::Left, {
+                                let theme_name = theme_name_shared.clone();
+                                cx.listener(move |this, _, _, cx| {
+                                    this.switch_theme(theme_name.clone(), cx);
+                                })
+                            })
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if is_selected {
+                                        rgb(TEXT_PRIMARY)
+                                    } else {
+                                        rgb(TEXT_SUBTLE)
+                                    })
+                                    .when(is_selected, |s| {
+                                        s.font_weight(gpui::FontWeight::SEMIBOLD)
+                                    })
+                                    .child(theme_name.clone()),
+                            )
+                            .when(is_selected, |el| {
+                                el.child(div().text_xs().text_color(rgb(TEXT_PRIMARY)).child("✓"))
+                            }),
+                    );
+                }
+                menu
+            })
     }
 
     fn render_add_project(&self) -> impl IntoElement {

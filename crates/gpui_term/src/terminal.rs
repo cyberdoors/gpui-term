@@ -567,11 +567,7 @@ impl Terminal {
     }
 
     /// Sends input to the terminal with origin metadata.
-    pub fn input_with_origin(
-        &mut self,
-        input: impl Into<Cow<'static, [u8]>>,
-        origin: InputOrigin,
-    ) {
+    pub fn input_with_origin(&mut self, input: impl Into<Cow<'static, [u8]>>, origin: InputOrigin) {
         if self.write_to_pty(input, origin) {
             self.events
                 .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
@@ -768,38 +764,33 @@ impl Terminal {
             {
                 self.write_to_pty(bytes, InputOrigin::Mouse);
             }
-        } else {
-            match e.button {
-                MouseButton::Left => {
-                    let (point, side) = grid_point_and_side(
-                        position,
-                        self.last_content.terminal_bounds,
-                        self.last_content.display_offset,
-                    );
+        } else if e.button == MouseButton::Left {
+            let (point, side) = grid_point_and_side(
+                position,
+                self.last_content.terminal_bounds,
+                self.last_content.display_offset,
+            );
 
-                    let selection_type = match e.click_count {
-                        0 => return,
-                        1 => Some(SelectionType::Simple),
-                        2 => Some(SelectionType::Semantic),
-                        3 => Some(SelectionType::Lines),
-                        _ => None,
-                    };
+            let selection_type = match e.click_count {
+                0 => return,
+                1 => Some(SelectionType::Simple),
+                2 => Some(SelectionType::Semantic),
+                3 => Some(SelectionType::Lines),
+                _ => None,
+            };
 
-                    if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
-                        self.events
-                            .push_back(InternalEvent::UpdateSelection(position));
-                        return;
-                    }
+            if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
+                self.events
+                    .push_back(InternalEvent::UpdateSelection(position));
+                return;
+            }
 
-                    let selection = selection_type
-                        .map(|selection_type| Selection::new(selection_type, point, side));
+            let selection =
+                selection_type.map(|selection_type| Selection::new(selection_type, point, side));
 
-                    if let Some(sel) = selection {
-                        self.events
-                            .push_back(InternalEvent::SetSelection(Some((sel, point))));
-                    }
-                }
-                _ => {}
+            if let Some(sel) = selection {
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((sel, point))));
             }
         }
     }
@@ -835,12 +826,11 @@ impl Terminal {
                 self.last_content.display_offset,
             );
 
-            if self.mouse_changed(point, side) {
-                if let Some(bytes) =
+            if self.mouse_changed(point, side)
+                && let Some(bytes) =
                     mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
-                {
-                    self.write_to_pty(bytes, InputOrigin::Mouse);
-                }
+            {
+                self.write_to_pty(bytes, InputOrigin::Mouse);
             }
         }
         cx.notify();
@@ -859,11 +849,11 @@ impl Terminal {
             self.events
                 .push_back(InternalEvent::UpdateSelection(position));
 
-            if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
-                if let Some(scroll_lines) = self.drag_line_delta(e, region) {
-                    self.events
-                        .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
-                }
+            if !self.last_content.mode.contains(TermMode::ALT_SCREEN)
+                && let Some(scroll_lines) = self.drag_line_delta(e, region)
+            {
+                self.events
+                    .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
             }
 
             cx.notify();
