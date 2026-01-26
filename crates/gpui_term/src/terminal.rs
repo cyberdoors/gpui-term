@@ -365,6 +365,42 @@ impl TerminalBuilder {
             let alac_shell =
                 shell_cmd.map(|program| tty::Shell::new(program, shell_args.unwrap_or_default()));
 
+            // Validate and fallback working directory
+            let working_directory = working_directory
+                .filter(|dir| {
+                    let exists = dir.exists();
+                    if !exists {
+                        log::warn!("Working directory does not exist: {:?}", dir);
+                    }
+                    exists
+                })
+                .or_else(|| {
+                    // Fallback to home directory
+                    let home = dirs::home_dir();
+                    if home.is_some() {
+                        log::info!("Using home directory as working directory");
+                    }
+                    home
+                })
+                .or_else(|| {
+                    // Fallback to USERPROFILE on Windows
+                    #[cfg(windows)]
+                    {
+                        let userprofile = std::env::var("USERPROFILE").ok().map(PathBuf::from);
+                        if userprofile.is_some() {
+                            log::info!("Using USERPROFILE as working directory");
+                        }
+                        userprofile
+                    }
+                    #[cfg(not(windows))]
+                    None
+                })
+                .or_else(|| {
+                    // Last resort: use current directory
+                    log::warn!("No valid working directory found, using current directory");
+                    std::env::current_dir().ok()
+                });
+
             let pty_options = tty::Options {
                 shell: alac_shell,
                 working_directory: working_directory.clone(),
@@ -386,6 +422,13 @@ impl TerminalBuilder {
                 },
                 ..Config::default()
             };
+
+            // Log PTY creation details for debugging
+            log::info!("Creating PTY with options:");
+            log::info!("  shell: {:?}", pty_options.shell);
+            log::info!("  working_directory: {:?}", pty_options.working_directory);
+            log::info!("  window_id: {}", window_id);
+            log::info!("  env vars count: {}", pty_options.env.len());
 
             let pty = tty::new(&pty_options, TerminalBounds::default().into(), window_id)
                 .context("failed to create PTY")?;

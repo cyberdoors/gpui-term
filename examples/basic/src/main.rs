@@ -5,6 +5,7 @@
 //! - Main terminal content padded to avoid the sidebar
 //! - Transparent/blurred window background
 
+use log;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
@@ -296,14 +297,25 @@ fn main() {
             env_vars.insert("COLORTERM".to_string(), "truecolor".to_string());
 
             let window_id = window.window_handle().window_id().as_u64();
-            let terminal_task = TerminalBuilder::new(
-                env::current_dir().ok(),
-                shell,
-                env_vars,
-                None,
-                window_id,
-                cx,
-            );
+
+            // Validate and prepare working directory
+            let working_dir = match env::current_dir() {
+                Ok(dir) if dir.exists() => {
+                    log::info!("Using current directory: {:?}", dir);
+                    Some(dir)
+                }
+                Ok(dir) => {
+                    log::warn!("Current directory does not exist: {:?}, falling back", dir);
+                    None
+                }
+                Err(e) => {
+                    log::warn!("Failed to get current directory: {}, falling back", e);
+                    None
+                }
+            };
+
+            let terminal_task =
+                TerminalBuilder::new(working_dir, shell, env_vars, None, window_id, cx);
 
             let view = cx.new(|cx| {
                 let focus_handle = cx.focus_handle();
