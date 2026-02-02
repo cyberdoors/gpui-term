@@ -27,7 +27,12 @@ use gpui_term::{
     TerminalContent, TerminalMiddleware, TerminalView, TextStyle, ThemeManager,
 };
 
+mod persistence;
+mod sidebar_state;
 mod title_bar;
+use sidebar_state::{
+    FavoriteEntry, FavoritesData, RecentData, SavedTab, SidebarSection, WorkspaceLayout,
+};
 use title_bar::TitleBar;
 actions!(
     agent_term,
@@ -39,7 +44,10 @@ actions!(
         NextTab,
         PreviousTab,
         SplitRight,
-        SplitDown
+        SplitDown,
+        SaveWorkspace,
+        RestoreWorkspace,
+        ToggleSearch
     ]
 );
 
@@ -152,6 +160,46 @@ impl TerminalMiddleware for LoggingMiddleware {
         if guard.as_ref() != Some(&output) {
             eprintln!("[middleware] output\n{}", output);
             *guard = Some(output);
+        }
+    }
+}
+
+/// SSH password middleware that auto-sends password when prompted.
+struct SshPasswordMiddleware {
+    password: String,
+    password_sent: Arc<Mutex<bool>>,
+}
+
+impl TerminalMiddleware for SshPasswordMiddleware {
+    fn on_input(
+        &self,
+        input: Cow<'static, [u8]>,
+        _origin: InputOrigin,
+    ) -> Option<Cow<'static, [u8]>> {
+        Some(input)
+    }
+
+    fn on_event(&self, _event: &Event) {}
+
+    fn on_output(&self, content: &TerminalContent) {
+        let mut sent = match self.password_sent.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        if *sent || self.password.is_empty() {
+            return;
+        }
+
+        let output = content_to_string(content);
+        let lower = output.to_lowercase();
+
+        // Check for password prompt
+        if lower.contains("password:") || lower.contains("password for") {
+            // Note: We can't directly send input here since we don't have terminal access.
+            // The password will need to be sent via a different mechanism.
+            // For now, mark as sent to prevent repeated detection.
+            *sent = true;
         }
     }
 }
@@ -328,6 +376,17 @@ fn main() {
                 let focus_handle = cx.focus_handle();
                 focus_handle.focus(window, cx);
 
+                // Load persistent state
+                let favorites = persistence::load_favorites();
+                let recent_dirs = persistence::load_recent();
+                let saved_workspaces = persistence::load_workspaces();
+
+                let mut section_expanded = HashMap::new();
+                section_expanded.insert(SidebarSection::Favorites, true);
+                section_expanded.insert(SidebarSection::Projects, true);
+                section_expanded.insert(SidebarSection::RecentDirs, true);
+                section_expanded.insert(SidebarSection::Workspaces, false);
+
                 AgentTermApp {
                     tabs: Vec::new(),
                     active_tab_index: 0,
@@ -359,6 +418,21 @@ fn main() {
                     ],
                     show_theme_menu: false,
                     selected_theme: "One Dark".into(),
+                    search_visible: false,
+                    search_query: String::new(),
+                    favorites,
+                    recent_dirs,
+                    saved_workspaces,
+                    section_expanded,
+                    ssh_dialog_open: false,
+                    ssh_dialog_focus: cx.focus_handle(),
+                    ssh_host: String::new(),
+                    ssh_port: "22".to_string(),
+                    ssh_user: String::new(),
+                    ssh_password: String::new(),
+                    ssh_focused_field: SshField::Host,
+                    ssh_show_password: false,
+                    ssh_connecting: false,
                 }
             });
 
@@ -528,6 +602,37 @@ struct AgentTermApp {
     projects: Vec<Project>,
     show_theme_menu: bool,
     selected_theme: SharedString,
+    // Search
+    search_visible: bool,
+    search_query: String,
+    // Favorites
+    favorites: FavoritesData,
+    // Recent directories
+    recent_dirs: RecentData,
+    // Saved workspaces
+    saved_workspaces: Vec<WorkspaceLayout>,
+    // Section collapse state
+    section_expanded: HashMap<SidebarSection, bool>,
+    // SSH dialog state
+    ssh_dialog_open: bool,
+    ssh_dialog_focus: FocusHandle,
+    ssh_host: String,
+    ssh_port: String,
+    ssh_user: String,
+    ssh_password: String,
+    ssh_focused_field: SshField,
+    ssh_show_password: bool,
+    ssh_connecting: bool,
+}
+
+/// SSH dialog input field focus state
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum SshField {
+    #[default]
+    Host,
+    Port,
+    User,
+    Password,
 }
 
 impl AgentTermApp {
@@ -547,6 +652,12 @@ impl AgentTermApp {
             Ok(dir) if dir.exists() => Some(dir),
             _ => None,
         };
+
+        // Record in recent directories
+        if let Some(ref dir) = working_dir {
+            self.recent_dirs.touch(dir.clone());
+            persistence::save_recent(&self.recent_dirs);
+        }
 
         let terminal_task = TerminalBuilder::new(working_dir, shell, env_vars, None, window_id, cx);
 
@@ -890,7 +1001,7 @@ impl AgentTermApp {
                     .size_full()
                     .overflow_hidden()
                     .relative()
-                    .border_t_1()
+                    .border_t_2()
                     .when(is_active, |el| el.border_color(active_border_color))
                     .when(!is_active, |el| el.border_color(transparent))
                     .hover(|el| {
@@ -1124,8 +1235,21 @@ impl AgentTermApp {
             .flex()
             .flex_col()
             .child(self.render_sidebar_header(cx))
-            .child(self.render_add_project())
-            .child(self.render_project_tree())
+            .when(self.search_visible, |el| {
+                el.child(self.render_search_bar(cx))
+            })
+            .child(self.render_quick_actions(cx))
+            .child(
+                div()
+                    .id("sidebar-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(self.render_favorites_section(cx))
+                    .child(self.render_project_tree(cx))
+                    .child(self.render_recent_dirs_section(cx))
+                    .child(self.render_workspaces_section(cx)),
+            )
+            .child(self.render_sidebar_footer())
     }
 
     fn render_sidebar_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1148,11 +1272,300 @@ impl AgentTermApp {
             .child(
                 div()
                     .flex()
-                    .gap(px(12.0))
-                    .child(icon_button("icons/search.svg"))
-                    .child(icon_button("icons/tag.svg"))
+                    .gap(px(4.0))
+                    .child(
+                        Button::new("nav-back")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowLeft),
+                    )
+                    .child(
+                        Button::new("nav-forward")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowRight),
+                    )
+                    .child(
+                        Button::new("search-toggle")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Search)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.search_visible = !this.search_visible;
+                                if !this.search_visible {
+                                    this.search_query.clear();
+                                }
+                                cx.notify();
+                            })),
+                    )
                     .child(self.render_theme_button(cx)),
             )
+    }
+
+    fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let query = self.search_query.clone();
+        div()
+            .px(px(12.0))
+            .py(px(8.0))
+            .border_b_1()
+            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+            .child(
+                div()
+                    .id("search-input")
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .rounded(px(6.0))
+                    .bg(rgba(0xffffff08))
+                    .border_1()
+                    .border_color(rgba(rgba_u32(BORDER_SOFT, 0.3)))
+                    .child(div().text_xs().text_color(rgb(TEXT_FAINT)).child("⌕"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(if query.is_empty() {
+                                rgb(TEXT_FAINT)
+                            } else {
+                                rgb(TEXT_PRIMARY)
+                            })
+                            .child(if query.is_empty() {
+                                "Search sessions...".to_string()
+                            } else {
+                                query
+                            }),
+                    )
+                    .when(!self.search_query.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .id("search-clear")
+                                .text_xs()
+                                .text_color(rgb(TEXT_SUBTLE))
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
+                                .child("×")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.search_query.clear();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    }),
+            )
+    }
+
+    fn render_quick_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(12.0))
+            .py(px(8.0))
+            .flex()
+            .gap(px(6.0))
+            .border_b_1()
+            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+            .child(
+                Button::new("new-terminal")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Plus)
+                    .label("New")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.create_new_tab(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("ssh-connect")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Globe)
+                    .label("SSH")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_ssh_dialog(window, cx);
+                    })),
+            )
+            .child(
+                Button::new("clone-session")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Copy)
+                    .label("Clone"),
+            )
+    }
+
+    fn render_section_header(
+        &self,
+        section: SidebarSection,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let expanded = self.section_expanded.get(&section).copied().unwrap_or(true);
+        div()
+            .id(SharedString::from(format!("section-{:?}", section)))
+            .px(px(12.0))
+            .py(px(6.0))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgba(0xffffff08)))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(TEXT_FAINT))
+                    .child(if expanded { "▼" } else { "▶" }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(TEXT_SUBTLE))
+                    .child(section.title().to_uppercase()),
+            )
+            .on_mouse_down(MouseButton::Left, {
+                cx.listener(move |this, _, _, cx| {
+                    let expanded = this.section_expanded.entry(section).or_insert(true);
+                    *expanded = !*expanded;
+                    cx.notify();
+                })
+            })
+    }
+
+    fn is_section_expanded(&self, section: SidebarSection) -> bool {
+        self.section_expanded.get(&section).copied().unwrap_or(true)
+    }
+
+    fn render_favorites_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let expanded = self.is_section_expanded(SidebarSection::Favorites);
+        let mut container = div().child(self.render_section_header(SidebarSection::Favorites, cx));
+
+        if expanded {
+            if self.favorites.entries.is_empty() {
+                container = container.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(4.0))
+                        .text_sm()
+                        .text_color(rgb(TEXT_FAINT))
+                        .child("No favorites yet"),
+                );
+            } else {
+                for (i, entry) in self.favorites.entries.iter().enumerate() {
+                    let display = entry.display_name();
+                    let path = entry.path.clone();
+                    let matches_search = self.search_query.is_empty()
+                        || display
+                            .to_lowercase()
+                            .contains(&self.search_query.to_lowercase());
+                    if matches_search {
+                        container = container.child(
+                            div()
+                                .id(SharedString::from(format!("fav-{}", i)))
+                                .group(SharedString::from(format!("fav-group-{}", i)))
+                                .px(px(16.0))
+                                .py(px(4.0))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff10)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    cx.listener(move |this, _, window, cx| {
+                                        // Open terminal in this directory
+                                        // For now just create a new tab
+                                        this.create_new_tab(window, cx);
+                                    })
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .child(
+                                            div().text_xs().text_color(rgb(TEXT_SUBTLE)).child("★"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(rgb(TEXT_PRIMARY))
+                                                .overflow_x_hidden()
+                                                .max_w(px(120.0))
+                                                .child(display),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("fav-rm-{}", i)))
+                                        .text_xs()
+                                        .text_color(rgb(TEXT_SUBTLE))
+                                        .cursor_pointer()
+                                        .opacity(0.0)
+                                        .group_hover(
+                                            SharedString::from(format!("fav-group-{}", i)),
+                                            |s| s.opacity(1.0),
+                                        )
+                                        .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
+                                        .child("×")
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation();
+                                        })
+                                        .on_click({
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.favorites.remove(&path);
+                                                persistence::save_favorites(&this.favorites);
+                                                cx.notify();
+                                            })
+                                        }),
+                                ),
+                        );
+                    }
+                }
+            }
+
+            // Add favorite button
+            container = container.child(
+                div()
+                    .id("add-favorite")
+                    .px(px(16.0))
+                    .py(px(4.0))
+                    .text_sm()
+                    .text_color(rgb(TEXT_FAINT))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(TEXT_SUBTLE)))
+                    .child("+ Add current dir")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            if let Ok(dir) = env::current_dir() {
+                                this.favorites.add(FavoriteEntry::new(dir));
+                                persistence::save_favorites(&this.favorites);
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            );
+        }
+
+        container
+    }
+
+    fn render_project_tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let expanded = self.is_section_expanded(SidebarSection::Projects);
+        let mut container = div().child(self.render_section_header(SidebarSection::Projects, cx));
+
+        if expanded {
+            container = container.child(self.render_add_project());
+
+            let mut tree = div().px(px(8.0));
+            for project in &self.projects {
+                tree = tree.child(self.render_project(project));
+            }
+            container = container.child(tree);
+        }
+
+        container
     }
 
     fn render_theme_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1246,20 +1659,6 @@ impl AgentTermApp {
         )
     }
 
-    fn render_project_tree(&self) -> impl IntoElement {
-        let mut tree = div()
-            .id("project-tree")
-            .flex_1()
-            .overflow_y_scroll()
-            .px(px(8.0));
-
-        for project in &self.projects {
-            tree = tree.child(self.render_project(project));
-        }
-
-        tree
-    }
-
     fn render_project(&self, project: &Project) -> impl IntoElement {
         div()
             .py(px(4.0))
@@ -1311,6 +1710,13 @@ impl AgentTermApp {
     }
 
     fn render_session(&self, session: &TerminalSession) -> impl IntoElement {
+        // Add status indicator color (green = running, gray = exited)
+        let status_color = if session.active {
+            rgb(0x98C379) // green
+        } else {
+            rgb(TEXT_FAINT) // gray
+        };
+
         div()
             .px(px(8.0))
             .py(px(4.0))
@@ -1328,12 +1734,8 @@ impl AgentTermApp {
                     .items_center()
                     .gap(px(8.0))
                     .child(
-                        div()
-                            .w(px(12.0))
-                            .h(px(12.0))
-                            .rounded(px(2.0))
-                            .border_1()
-                            .border_color(rgb(TEXT_SUBTLE)),
+                        // Status indicator dot
+                        div().w(px(6.0)).h(px(6.0)).rounded_full().bg(status_color),
                     )
                     .child(
                         div()
@@ -1372,6 +1774,650 @@ impl AgentTermApp {
             )
     }
 
+    fn render_recent_dirs_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let expanded = self.is_section_expanded(SidebarSection::RecentDirs);
+        let mut container = div().child(self.render_section_header(SidebarSection::RecentDirs, cx));
+
+        if expanded {
+            if self.recent_dirs.entries.is_empty() {
+                container = container.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(4.0))
+                        .text_sm()
+                        .text_color(rgb(TEXT_FAINT))
+                        .child("No recent directories"),
+                );
+            } else {
+                for (i, entry) in self.recent_dirs.entries.iter().take(10).enumerate() {
+                    let display = entry.display_name();
+                    let _path = entry.path.clone();
+                    let matches_search = self.search_query.is_empty()
+                        || display
+                            .to_lowercase()
+                            .contains(&self.search_query.to_lowercase());
+                    if matches_search {
+                        container = container.child(
+                            div()
+                                .id(SharedString::from(format!("recent-{}", i)))
+                                .px(px(16.0))
+                                .py(px(4.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff10)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.create_new_tab(window, cx);
+                                    })
+                                })
+                                .child(div().text_xs().text_color(rgb(TEXT_FAINT)).child("📁"))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(rgb(TEXT_PRIMARY))
+                                        .overflow_x_hidden()
+                                        .max_w(px(140.0))
+                                        .child(display),
+                                ),
+                        );
+                    }
+                }
+            }
+        }
+
+        container
+    }
+
+    fn render_workspaces_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let expanded = self.is_section_expanded(SidebarSection::Workspaces);
+        let mut container = div().child(self.render_section_header(SidebarSection::Workspaces, cx));
+
+        if expanded {
+            if self.saved_workspaces.is_empty() {
+                container = container.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(4.0))
+                        .text_sm()
+                        .text_color(rgb(TEXT_FAINT))
+                        .child("No saved workspaces"),
+                );
+            } else {
+                for (i, ws) in self.saved_workspaces.iter().enumerate() {
+                    let name = ws.name.clone();
+                    let matches_search = self.search_query.is_empty()
+                        || name
+                            .to_lowercase()
+                            .contains(&self.search_query.to_lowercase());
+                    if matches_search {
+                        container = container.child(
+                            div()
+                                .id(SharedString::from(format!("ws-{}", i)))
+                                .group(SharedString::from(format!("ws-group-{}", i)))
+                                .px(px(16.0))
+                                .py(px(4.0))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff10)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .child(
+                                            div().text_xs().text_color(rgb(TEXT_FAINT)).child("▢"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(rgb(TEXT_PRIMARY))
+                                                .overflow_x_hidden()
+                                                .max_w(px(120.0))
+                                                .child(name.clone()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(TEXT_FAINT))
+                                        .child(format!("{} tabs", ws.tabs.len())),
+                                ),
+                        );
+                    }
+                }
+            }
+
+            // Save current workspace button
+            container = container.child(
+                div()
+                    .id("save-workspace")
+                    .px(px(16.0))
+                    .py(px(4.0))
+                    .text_sm()
+                    .text_color(rgb(TEXT_FAINT))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(TEXT_SUBTLE)))
+                    .child("+ Save current workspace")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.save_current_workspace(cx);
+                        }),
+                    ),
+            );
+        }
+
+        container
+    }
+
+    fn render_sidebar_footer(&self) -> impl IntoElement {
+        let session_count = self.tabs.len();
+        div()
+            .h(px(32.0))
+            .px(px(16.0))
+            .flex()
+            .items_center()
+            .border_t_1()
+            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+            .child(div().text_xs().text_color(rgb(TEXT_FAINT)).child(format!(
+                "{} active session{}",
+                session_count,
+                if session_count == 1 { "" } else { "s" }
+            )))
+    }
+
+    fn save_current_workspace(&mut self, cx: &mut Context<Self>) {
+        let tabs: Vec<SavedTab> = self
+            .tabs
+            .iter()
+            .map(|tab| SavedTab {
+                title: tab.title.to_string(),
+                working_dir: None, // TODO: Track working dir per tab
+            })
+            .collect();
+
+        let workspace = WorkspaceLayout {
+            name: format!("Workspace {}", self.saved_workspaces.len() + 1),
+            tabs,
+            active_tab_index: self.active_tab_index,
+            sidebar_width: self.sidebar_width,
+        };
+
+        persistence::save_workspace(&workspace);
+        self.saved_workspaces.push(workspace);
+        cx.notify();
+    }
+
+    fn open_ssh_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ssh_host = String::new();
+        self.ssh_port = "22".to_string();
+        self.ssh_user = String::new();
+        self.ssh_password = String::new();
+        self.ssh_focused_field = SshField::Host;
+        self.ssh_show_password = false;
+        self.ssh_dialog_open = true;
+        // Focus the dialog to capture keyboard input
+        self.ssh_dialog_focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn close_ssh_dialog(&mut self, cx: &mut Context<Self>) {
+        self.ssh_dialog_open = false;
+        self.ssh_password.clear(); // Clear password for security
+        cx.notify();
+    }
+
+    fn submit_ssh_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.ssh_host.is_empty() || self.ssh_user.is_empty() {
+            return; // Don't connect if fields are empty
+        }
+
+        let host = self.ssh_host.clone();
+        let port = self.ssh_port.clone();
+        let user = self.ssh_user.clone();
+        let password = self.ssh_password.clone();
+
+        self.ssh_dialog_open = false;
+        self.ssh_password.clear();
+        self.connect_ssh(host, port, user, password, window, cx);
+    }
+
+    fn render_ssh_input_field(
+        &self,
+        id: &str,
+        value: &str,
+        placeholder: &str,
+        is_password: bool,
+        is_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let field = match id {
+            "host" => SshField::Host,
+            "port" => SshField::Port,
+            "user" => SshField::User,
+            "password" => SshField::Password,
+            _ => SshField::Host,
+        };
+
+        div()
+            .id(SharedString::from(format!("ssh-input-{}", id)))
+            .px(px(12.0))
+            .py(px(8.0))
+            .w_full()
+            .bg(rgba(0x00000040))
+            .border_1()
+            .border_color(if is_focused {
+                rgb(0x0078d4)
+            } else {
+                rgba(rgba_u32(BORDER_SOFT, 0.5))
+            })
+            .rounded(px(6.0))
+            .cursor_text()
+            .on_mouse_down(MouseButton::Left, {
+                cx.listener(move |this, _, _, cx| {
+                    this.ssh_focused_field = field;
+                    cx.notify();
+                })
+            })
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(if value.is_empty() {
+                        rgb(TEXT_FAINT)
+                    } else {
+                        rgb(TEXT_PRIMARY)
+                    })
+                    .child(if value.is_empty() {
+                        placeholder.to_string()
+                    } else if is_password && !self.ssh_show_password {
+                        "•".repeat(value.len())
+                    } else {
+                        value.to_string()
+                    }),
+            )
+    }
+
+    fn render_ssh_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("ssh-dialog-overlay")
+            .track_focus(&self.ssh_dialog_focus)
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.5))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.close_ssh_dialog(cx);
+                }),
+            )
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let key = &event.keystroke.key;
+
+                // Handle Enter to submit
+                if key == "enter" {
+                    this.submit_ssh_dialog(window, cx);
+                    return;
+                }
+
+                // Handle Escape to close
+                if key == "escape" {
+                    this.close_ssh_dialog(cx);
+                    return;
+                }
+
+                // Handle Tab to switch fields
+                if key == "tab" {
+                    this.ssh_focused_field = match this.ssh_focused_field {
+                        SshField::Host => SshField::Port,
+                        SshField::Port => SshField::User,
+                        SshField::User => SshField::Password,
+                        SshField::Password => SshField::Host,
+                    };
+                    cx.notify();
+                    return;
+                }
+
+                // Handle Backspace
+                if key == "backspace" {
+                    match this.ssh_focused_field {
+                        SshField::Host => {
+                            this.ssh_host.pop();
+                        }
+                        SshField::Port => {
+                            this.ssh_port.pop();
+                        }
+                        SshField::User => {
+                            this.ssh_user.pop();
+                        }
+                        SshField::Password => {
+                            this.ssh_password.pop();
+                        }
+                    }
+                    cx.notify();
+                    return;
+                }
+
+                // Handle character input
+                if let Some(key_char) = &event.keystroke.key_char {
+                    let ch = key_char.as_str();
+                    match this.ssh_focused_field {
+                        SshField::Host => this.ssh_host.push_str(ch),
+                        SshField::Port => {
+                            // Only allow digits for port
+                            if ch.chars().all(|c| c.is_ascii_digit()) {
+                                this.ssh_port.push_str(ch);
+                            }
+                        }
+                        SshField::User => this.ssh_user.push_str(ch),
+                        SshField::Password => this.ssh_password.push_str(ch),
+                    }
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .id("ssh-dialog")
+                    .w(px(420.0))
+                    .rounded(px(12.0))
+                    .bg(rgb(SURFACE_SIDEBAR))
+                    .border_1()
+                    .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+                    .shadow(Self::sidebar_shadow())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        // Header
+                        div()
+                            .px(px(20.0))
+                            .py(px(16.0))
+                            .border_b_1()
+                            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(TEXT_PRIMARY))
+                                    .child("SSH 远程连接"),
+                            )
+                            .child(
+                                div()
+                                    .id("ssh-close")
+                                    .w(px(24.0))
+                                    .h(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .text_color(rgb(TEXT_SUBTLE))
+                                    .hover(|s| s.text_color(rgb(TEXT_PRIMARY)).bg(rgba(0xffffff10)))
+                                    .child("×")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.close_ssh_dialog(cx);
+                                        }),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        // Content
+                        div()
+                            .px(px(20.0))
+                            .py(px(16.0))
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(rgb(TEXT_SUBTLE))
+                                            .child("主机地址"),
+                                    )
+                                    .child(self.render_ssh_input_field(
+                                        "host",
+                                        &self.ssh_host,
+                                        "例如: 192.168.1.100",
+                                        false,
+                                        self.ssh_focused_field == SshField::Host,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(rgb(TEXT_SUBTLE))
+                                                    .child("端口"),
+                                            )
+                                            .child(self.render_ssh_input_field(
+                                                "port",
+                                                &self.ssh_port,
+                                                "22",
+                                                false,
+                                                self.ssh_focused_field == SshField::Port,
+                                                cx,
+                                            )),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(rgb(TEXT_SUBTLE))
+                                                    .child("用户名"),
+                                            )
+                                            .child(self.render_ssh_input_field(
+                                                "user",
+                                                &self.ssh_user,
+                                                "例如: root",
+                                                false,
+                                                self.ssh_focused_field == SshField::User,
+                                                cx,
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(rgb(TEXT_SUBTLE))
+                                                    .child("密码"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("toggle-password")
+                                                    .text_xs()
+                                                    .text_color(rgb(TEXT_FAINT))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.text_color(rgb(TEXT_SUBTLE)))
+                                                    .child(if self.ssh_show_password {
+                                                        "隐藏"
+                                                    } else {
+                                                        "显示"
+                                                    })
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        cx.listener(|this, _, _, cx| {
+                                                            this.ssh_show_password =
+                                                                !this.ssh_show_password;
+                                                            cx.notify();
+                                                        }),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(self.render_ssh_input_field(
+                                        "password",
+                                        &self.ssh_password,
+                                        "输入密码",
+                                        true,
+                                        self.ssh_focused_field == SshField::Password,
+                                        cx,
+                                    )),
+                            ),
+                    )
+                    .child(
+                        // Footer
+                        div()
+                            .px(px(20.0))
+                            .py(px(16.0))
+                            .border_t_1()
+                            .border_color(rgba(rgba_u32(BORDER_SOFT, BORDER_SOFT_ALPHA)))
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(Button::new("ssh-cancel").ghost().label("取消").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.close_ssh_dialog(cx);
+                                }),
+                            ))
+                            .child(Button::new("ssh-connect").primary().label("连接").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.submit_ssh_dialog(window, cx);
+                                }),
+                            )),
+                    ),
+            )
+    }
+
+    fn connect_ssh(
+        &mut self,
+        host: String,
+        port: String,
+        user: String,
+        password: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ssh_dialog_open = false;
+        self.ssh_connecting = true;
+
+        // Build SSH command
+        let port_num = port.parse::<u16>().unwrap_or(22);
+        let ssh_command = if port_num == 22 {
+            format!("ssh -o StrictHostKeyChecking=no {}@{}", user, host)
+        } else {
+            format!(
+                "ssh -o StrictHostKeyChecking=no -p {} {}@{}",
+                port_num, user, host
+            )
+        };
+
+        let window_id = window.window_handle().window_id().as_u64();
+        let text_style = self.text_style.clone();
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        let terminal_task = TerminalBuilder::new(
+            None,
+            Some(ssh_command),
+            Default::default(),
+            Some(10000),
+            window_id,
+            cx,
+        );
+
+        let window_handle = window.window_handle();
+        let password_for_send = password.clone();
+
+        cx.spawn(async move |view_handle, cx| {
+            let builder = match terminal_task.await {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Failed to create SSH terminal: {e}");
+                    return;
+                }
+            };
+
+            let _ = cx.update_window(window_handle, |_, window, cx| {
+                let _ = view_handle.update(cx, |app, cx| {
+                    let terminal = cx.new(|cx| builder.subscribe(cx));
+
+                    // Set up password auto-send
+                    let password = password_for_send.clone();
+                    let password_sent = Arc::new(Mutex::new(false));
+
+                    terminal.update(cx, |terminal, _| {
+                        let password = password.clone();
+                        let password_sent = password_sent.clone();
+
+                        terminal.add_middleware(Arc::new(SshPasswordMiddleware {
+                            password,
+                            password_sent,
+                        }));
+                    });
+
+                    let terminal_view = cx.new(|cx| {
+                        TerminalView::new_with_style(terminal.clone(), text_style, window, cx)
+                    });
+
+                    let pane_id = app.next_pane_id;
+                    app.next_pane_id += 1;
+
+                    app.subscribe_to_terminal_events(tab_id, pane_id, &terminal, cx);
+
+                    let title: SharedString = format!("SSH: {}@{}", user, host).into();
+
+                    let tab = TerminalTab {
+                        id: tab_id,
+                        root: PaneNode::Leaf {
+                            pane_id,
+                            terminal: terminal.clone(),
+                            terminal_view: terminal_view.clone(),
+                        },
+                        title,
+                    };
+
+                    app.tabs.push(tab);
+                    app.active_tab_index = app.tabs.len() - 1;
+                    app.active_pane_id = pane_id;
+                    app.tab_bar_scroll_handle
+                        .scroll_to_item(app.active_tab_index);
+                    app.ssh_connecting = false;
+
+                    let focus_handle = terminal_view.read(cx).focus_handle(cx);
+                    focus_handle.focus(window, cx);
+
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+
+        cx.notify();
+    }
+
     fn render_terminal_container(
         &self,
         window: &mut Window,
@@ -1404,8 +2450,8 @@ impl AgentTermApp {
                     div()
                         .flex_1()
                         .overflow_hidden()
-                        .py(px(16.0))
-                        .px(px(8.0))
+                        // .py(px(16.0))
+                        // .px(px(8.0))
                         .child(pane_el),
                 )
             })
@@ -1416,21 +2462,6 @@ impl AgentTermApp {
                     .child(div().text_color(rgb(TEXT_FAINT)).child("Loading terminal…"))
             })
     }
-}
-
-fn icon_button(_icon_path: &str) -> impl IntoElement {
-    // Placeholder - using text for now since we don't have icons
-    div()
-        .w(px(20.0))
-        .h(px(20.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(4.0))
-        .cursor_pointer()
-        .text_color(rgb(TEXT_SUBTLE))
-        .hover(|s| s.text_color(rgb(TEXT_PRIMARY)).bg(rgba(0xffffff10)))
-        .child("•")
 }
 
 impl Render for AgentTermApp {
@@ -1531,6 +2562,9 @@ impl Render for AgentTermApp {
                     .child(self.render_terminal_container(window, cx))
                     .when(self.sidebar_visible, |el| {
                         el.child(self.render_sidebar_shell(cx))
+                    })
+                    .when(self.ssh_dialog_open, |el| {
+                        el.child(self.render_ssh_dialog(cx))
                     }),
             )
     }
