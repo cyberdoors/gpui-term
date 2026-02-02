@@ -12,6 +12,14 @@ path = "src/main.rs"
 [dependencies]
 log.workspace = true
 gpui_term = { path = "../../crates/gpui_term" }
+gpui-component = { path = "../../../gpui-component/crates/ui" }
+gpui-component-assets = { path = "../../../gpui-component/crates/assets" }
 gpui.workspace = true
 portable-pty.workspace = true
-anyhow.workspace = true
+smallvec = "1"
+env_logger = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+

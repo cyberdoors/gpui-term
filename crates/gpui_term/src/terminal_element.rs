@@ -142,9 +142,10 @@ impl BatchedTextRun {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Pixel-snap text position to avoid subpixel rendering blur on Windows
         let pos = Point::new(
-            origin.x + self.start_point.column as f32 * dimensions.cell_width,
-            origin.y + self.start_point.line as f32 * dimensions.line_height,
+            (origin.x + self.start_point.column as f32 * dimensions.cell_width).round(),
+            (origin.y + self.start_point.line as f32 * dimensions.line_height).round(),
         );
 
         let _ = window
@@ -188,7 +189,7 @@ impl LayoutRect {
             let alac_point = self.point;
             point(
                 (origin.x + alac_point.column as f32 * dimensions.cell_width).floor(),
-                origin.y + alac_point.line as f32 * dimensions.line_height,
+                (origin.y + alac_point.line as f32 * dimensions.line_height).floor(),
             )
         };
         let rect_size = point(
@@ -219,16 +220,16 @@ struct BlockFragment {
 impl BlockFragment {
     fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalBounds, window: &mut Window) {
         let cell_origin = point(
-            origin.x + self.point.column as f32 * dimensions.cell_width,
-            origin.y + self.point.line as f32 * dimensions.line_height,
+            (origin.x + self.point.column as f32 * dimensions.cell_width).floor(),
+            (origin.y + self.point.line as f32 * dimensions.line_height).floor(),
         );
         let position = point(
-            cell_origin.x + self.rect.x * dimensions.cell_width,
-            cell_origin.y + self.rect.y * dimensions.line_height,
+            (cell_origin.x + self.rect.x * dimensions.cell_width).round(),
+            (cell_origin.y + self.rect.y * dimensions.line_height).round(),
         );
         let rect_size = size(
-            dimensions.cell_width * self.rect.width,
-            dimensions.line_height * self.rect.height,
+            (dimensions.cell_width * self.rect.width).ceil(),
+            (dimensions.line_height * self.rect.height).ceil(),
         );
         window.paint_quad(fill(Bounds::new(position, rect_size), self.color));
     }
@@ -250,13 +251,13 @@ struct PolygonFragment {
 impl PolygonFragment {
     fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalBounds, window: &mut Window) {
         let cell_origin = point(
-            origin.x + self.point.column as f32 * dimensions.cell_width,
-            origin.y + self.point.line as f32 * dimensions.line_height,
+            (origin.x + self.point.column as f32 * dimensions.cell_width).floor(),
+            (origin.y + self.point.line as f32 * dimensions.line_height).floor(),
         );
         let to_point = |p: BlockPoint| {
             point(
-                cell_origin.x + p.x * dimensions.cell_width,
-                cell_origin.y + p.y * dimensions.line_height,
+                (cell_origin.x + p.x * dimensions.cell_width).round(),
+                (cell_origin.y + p.y * dimensions.line_height).round(),
             )
         };
 
@@ -1396,7 +1397,8 @@ impl Element for TerminalElement {
         let font_id = window.text_system().resolve_font(&text_style.font);
         let mut cell_width = measure_cell_width(text_system, font_id, font_pixels);
         cell_width = (cell_width + px(text_style.letter_spacing)).max(px(1.0));
-        let line_height = px(f32::from(font_pixels) * text_style.line_height_multiplier);
+        // Round line_height to whole pixels for crisp text rendering on Windows
+        let line_height = px((f32::from(font_pixels) * text_style.line_height_multiplier).round());
 
         let dimensions = TerminalBounds::new(line_height, cell_width, bounds);
 

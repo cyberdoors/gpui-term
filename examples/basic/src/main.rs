@@ -4,26 +4,44 @@
 //! - Floating, rounded sidebar with inset + shadow
 //! - Main terminal content padded to avoid the sidebar
 //! - Transparent/blurred window background
+//! - Multi-session terminal tabs in the title bar
 
-use log;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
+use gpui_component::tab::{Tab, TabBar};
+use gpui_component::{ActiveTheme, AxisExt, IconName, Sizable, h_flex, v_flex};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 
 use gpui::{
-    App, AppContext, Application, BoxShadow, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Window, WindowBackgroundAppearance, WindowOptions, actions, div, hsla, point, prelude::*, px,
-    rgb, rgba,
+    AnyElement, App, AppContext, Application, Axis, BoxShadow, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, WindowBackgroundAppearance, WindowOptions, actions,
+    div, hsla, point, prelude::*, px, rgb, rgba,
 };
 use gpui_term::{
     Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal, TerminalBuilder, TerminalConfig,
     TerminalContent, TerminalMiddleware, TerminalView, TextStyle, ThemeManager,
 };
 
-actions!(agent_term, [Quit, ToggleSidebar]);
+mod title_bar;
+use title_bar::TitleBar;
+actions!(
+    agent_term,
+    [
+        Quit,
+        ToggleSidebar,
+        NewTab,
+        CloseTab,
+        NextTab,
+        PreviousTab,
+        SplitRight,
+        SplitDown
+    ]
+);
 
 // Layout (mirrors the Tauri UI tokens / App.tsx layout math)
 const SIDEBAR_INSET: f32 = 8.0;
@@ -45,7 +63,7 @@ const SURFACE_ROOT_ALPHA: f32 = 0.12;
 const SURFACE_SIDEBAR_ALPHA: f32 = 0.4;
 const BORDER_SOFT_ALPHA: f32 = 0.50;
 
-const ENABLE_BLUR: bool = true;
+const ENABLE_BLUR: bool = false;
 
 struct LoggingMiddleware {
     last_output: Mutex<Option<String>>,
@@ -153,6 +171,12 @@ fn platform_keybindings() -> Vec<KeyBinding> {
             KeyBinding::new("cmd-v", Paste, Some("Terminal")),
             KeyBinding::new("cmd-a", SelectAll, Some("Terminal")),
             KeyBinding::new("cmd-k", Clear, Some("Terminal")),
+            KeyBinding::new("cmd-t", NewTab, None),
+            KeyBinding::new("cmd-w", CloseTab, None),
+            KeyBinding::new("ctrl-tab", NextTab, None),
+            KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+            KeyBinding::new("cmd-d", SplitRight, None),
+            KeyBinding::new("cmd-shift-d", SplitDown, None),
         ]);
     }
 
@@ -163,6 +187,12 @@ fn platform_keybindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-shift-b", ToggleSidebar, None),
             KeyBinding::new("ctrl-shift-a", SelectAll, Some("Terminal")),
             KeyBinding::new("ctrl-shift-k", Clear, Some("Terminal")),
+            KeyBinding::new("ctrl-shift-t", NewTab, None),
+            KeyBinding::new("ctrl-shift-w", CloseTab, None),
+            KeyBinding::new("ctrl-tab", NextTab, None),
+            KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+            KeyBinding::new("ctrl-shift-d", SplitRight, None),
+            KeyBinding::new("ctrl-alt-d", SplitDown, None),
         ]);
     }
 
@@ -256,7 +286,10 @@ fn rgba_u32(rgb: u32, alpha: f32) -> u32 {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    let app = Application::new().with_assets(gpui_component_assets::Assets);
+
+    app.run(|cx: &mut App| {
+        gpui_component::init(cx);
         cx.bind_keys(platform_keybindings());
 
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -291,40 +324,18 @@ fn main() {
                 TerminalConfig::load_or_create().unwrap_or_else(|_| TerminalConfig::default());
             let text_style = TextStyle::from_config(&terminal_config);
 
-            let shell = platform_shell();
-            let mut env_vars: HashMap<String, String> = env::vars().collect();
-            env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
-            env_vars.insert("COLORTERM".to_string(), "truecolor".to_string());
-
-            let window_id = window.window_handle().window_id().as_u64();
-
-            // Validate and prepare working directory
-            let working_dir = match env::current_dir() {
-                Ok(dir) if dir.exists() => {
-                    log::info!("Using current directory: {:?}", dir);
-                    Some(dir)
-                }
-                Ok(dir) => {
-                    log::warn!("Current directory does not exist: {:?}, falling back", dir);
-                    None
-                }
-                Err(e) => {
-                    log::warn!("Failed to get current directory: {}, falling back", e);
-                    None
-                }
-            };
-
-            let terminal_task =
-                TerminalBuilder::new(working_dir, shell, env_vars, None, window_id, cx);
-
             let view = cx.new(|cx| {
                 let focus_handle = cx.focus_handle();
                 focus_handle.focus(window, cx);
 
                 AgentTermApp {
-                    terminal: None,
-                    terminal_view: None,
+                    tabs: Vec::new(),
+                    active_tab_index: 0,
+                    next_tab_id: 0,
+                    next_pane_id: 0,
+                    active_pane_id: 0,
                     focus_handle,
+                    tab_bar_scroll_handle: ScrollHandle::new(),
                     sidebar_visible: true,
                     sidebar_width: 250.0,
                     resizing_sidebar: false,
@@ -351,24 +362,13 @@ fn main() {
                 }
             });
 
+            // Create the initial tab
             let view_clone = view.downgrade();
             let window_handle = window.window_handle();
             cx.spawn(async move |cx| {
-                let builder = match terminal_task.await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        eprintln!("Failed to create terminal: {e}");
-                        return;
-                    }
-                };
-
                 let _ = cx.update_window(window_handle, |_, window, cx| {
                     let _ = view_clone.update(cx, |app, cx| {
-                        let terminal = cx.new(|cx| builder.subscribe(cx));
-                        terminal.update(cx, |terminal, _| {
-                            terminal.add_middleware(Arc::new(LoggingMiddleware::new()));
-                        });
-                        app.set_terminal(terminal, window, cx);
+                        app.create_new_tab(window, cx);
                     });
                 });
             })
@@ -393,10 +393,132 @@ struct TerminalSession {
     active: bool,
 }
 
+/// Represents the pane layout within a tab
+enum PaneNode {
+    Leaf {
+        pane_id: usize,
+        terminal: Entity<Terminal>,
+        terminal_view: Entity<TerminalView>,
+    },
+    Split {
+        axis: Axis,
+        children: Vec<PaneNode>,
+    },
+}
+
+impl PaneNode {
+    fn first_pane_id(&self) -> usize {
+        match self {
+            PaneNode::Leaf { pane_id, .. } => *pane_id,
+            PaneNode::Split { children, .. } => children[0].first_pane_id(),
+        }
+    }
+
+    fn first_terminal_view(&self) -> Entity<TerminalView> {
+        match self {
+            PaneNode::Leaf { terminal_view, .. } => terminal_view.clone(),
+            PaneNode::Split { children, .. } => children[0].first_terminal_view(),
+        }
+    }
+
+    fn split_pane(
+        &mut self,
+        target_pane_id: usize,
+        axis: Axis,
+        new_pane_id: usize,
+        new_terminal: Entity<Terminal>,
+        new_terminal_view: Entity<TerminalView>,
+    ) -> bool {
+        match self {
+            PaneNode::Leaf { pane_id, .. } if *pane_id == target_pane_id => {
+                let old = std::mem::replace(
+                    self,
+                    PaneNode::Split {
+                        axis,
+                        children: Vec::new(),
+                    },
+                );
+                if let PaneNode::Split { children, .. } = self {
+                    children.push(old);
+                    children.push(PaneNode::Leaf {
+                        pane_id: new_pane_id,
+                        terminal: new_terminal,
+                        terminal_view: new_terminal_view,
+                    });
+                }
+                true
+            }
+            PaneNode::Split { children, .. } => {
+                for child in children.iter_mut() {
+                    if child.split_pane(
+                        target_pane_id,
+                        axis,
+                        new_pane_id,
+                        new_terminal.clone(),
+                        new_terminal_view.clone(),
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn remove_pane(&mut self, target_pane_id: usize) -> bool {
+        match self {
+            PaneNode::Leaf { pane_id, .. } => *pane_id == target_pane_id,
+            PaneNode::Split { children, .. } => {
+                let mut removed_idx = None;
+                for (i, child) in children.iter_mut().enumerate() {
+                    if child.remove_pane(target_pane_id) {
+                        removed_idx = Some(i);
+                        break;
+                    }
+                }
+                if let Some(idx) = removed_idx {
+                    children.remove(idx);
+                }
+                if children.len() == 1 {
+                    let only_child = children.remove(0);
+                    *self = only_child;
+                    return false;
+                }
+                children.is_empty()
+            }
+        }
+    }
+
+    fn collect_terminal_views(&self, views: &mut Vec<Entity<TerminalView>>) {
+        match self {
+            PaneNode::Leaf { terminal_view, .. } => {
+                views.push(terminal_view.clone());
+            }
+            PaneNode::Split { children, .. } => {
+                for child in children {
+                    child.collect_terminal_views(views);
+                }
+            }
+        }
+    }
+}
+
+/// Represents a single terminal tab session
+struct TerminalTab {
+    id: usize,
+    root: PaneNode,
+    title: SharedString,
+}
+
 struct AgentTermApp {
-    terminal: Option<Entity<Terminal>>,
-    terminal_view: Option<Entity<TerminalView>>,
+    tabs: Vec<TerminalTab>,
+    active_tab_index: usize,
+    next_tab_id: usize,
+    next_pane_id: usize,
+    active_pane_id: usize,
     focus_handle: FocusHandle,
+    tab_bar_scroll_handle: ScrollHandle,
     sidebar_visible: bool,
     sidebar_width: f32,
     resizing_sidebar: bool,
@@ -409,21 +531,252 @@ struct AgentTermApp {
 }
 
 impl AgentTermApp {
-    fn set_terminal(
+    fn create_new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        eprintln!(
+            "[DEBUG] create_new_tab called, current tabs: {}",
+            self.tabs.len()
+        );
+        let shell = platform_shell();
+        let mut env_vars: HashMap<String, String> = env::vars().collect();
+        env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+        env_vars.insert("COLORTERM".to_string(), "truecolor".to_string());
+
+        let window_id = window.window_handle().window_id().as_u64();
+
+        let working_dir = match env::current_dir() {
+            Ok(dir) if dir.exists() => Some(dir),
+            _ => None,
+        };
+
+        let terminal_task = TerminalBuilder::new(working_dir, shell, env_vars, None, window_id, cx);
+
+        let text_style = self.text_style.clone();
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+
+        let window_handle = window.window_handle();
+
+        cx.spawn(async move |view_handle, cx| {
+            let builder = match terminal_task.await {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Failed to create terminal: {e}");
+                    return;
+                }
+            };
+
+            let _ = cx.update_window(window_handle, |_, window, cx| {
+                let _ = view_handle.update(cx, |app, cx| {
+                    let terminal = cx.new(|cx| builder.subscribe(cx));
+                    terminal.update(cx, |terminal, _| {
+                        terminal.add_middleware(Arc::new(LoggingMiddleware::new()));
+                    });
+
+                    let terminal_view = cx.new(|cx| {
+                        TerminalView::new_with_style(terminal.clone(), text_style, window, cx)
+                    });
+
+                    let pane_id = app.next_pane_id;
+                    app.next_pane_id += 1;
+
+                    // Subscribe to terminal events for title changes and close
+                    app.subscribe_to_terminal_events(tab_id, pane_id, &terminal, cx);
+
+                    let title: SharedString = format!("Terminal {}", tab_id + 1).into();
+
+                    let tab = TerminalTab {
+                        id: tab_id,
+                        root: PaneNode::Leaf {
+                            pane_id,
+                            terminal: terminal.clone(),
+                            terminal_view: terminal_view.clone(),
+                        },
+                        title,
+                    };
+
+                    app.tabs.push(tab);
+                    app.active_tab_index = app.tabs.len() - 1;
+                    app.active_pane_id = pane_id;
+                    app.tab_bar_scroll_handle
+                        .scroll_to_item(app.active_tab_index);
+
+                    // Focus the new terminal
+                    let focus_handle = terminal_view.read(cx).focus_handle(cx);
+                    focus_handle.focus(window, cx);
+
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
+    fn subscribe_to_terminal_events(
         &mut self,
-        terminal: Entity<Terminal>,
-        window: &mut Window,
+        tab_id: usize,
+        pane_id: usize,
+        terminal: &Entity<Terminal>,
         cx: &mut Context<Self>,
     ) {
-        let text_style = self.text_style.clone();
-        let terminal_view =
-            cx.new(|cx| TerminalView::new_with_style(terminal.clone(), text_style, window, cx));
-        let focus_handle = terminal_view.read(cx).focus_handle(cx);
-        focus_handle.focus(window, cx);
+        cx.subscribe(
+            terminal,
+            move |this, terminal, event: &Event, cx| match event {
+                Event::TitleChanged => {
+                    let title = terminal.read(cx).breadcrumb_text.clone();
+                    if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        if tab.root.first_pane_id() == pane_id && !title.is_empty() {
+                            tab.title = title.into();
+                        }
+                    }
+                    cx.notify();
+                }
+                Event::CloseTerminal => {
+                    if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        let should_remove = tab.root.remove_pane(pane_id);
+                        if should_remove {
+                            this.close_tab_by_id(tab_id, cx);
+                            return;
+                        }
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            },
+        )
+        .detach();
+    }
 
-        self.terminal = Some(terminal);
-        self.terminal_view = Some(terminal_view);
+    fn switch_to_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index < self.tabs.len() {
+            self.active_tab_index = index;
+            self.tab_bar_scroll_handle.scroll_to_item(index);
+            if let Some(tab) = self.tabs.get(index) {
+                let tv = tab.root.first_terminal_view();
+                self.active_pane_id = tab.root.first_pane_id();
+                let focus_handle = tv.read(cx).focus_handle(cx);
+                focus_handle.focus(window, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() <= 1 {
+            // Don't close the last tab, create a new one instead
+            self.create_new_tab(window, cx);
+            if !self.tabs.is_empty() {
+                self.tabs.remove(0);
+            }
+            return;
+        }
+
+        if index < self.tabs.len() {
+            self.tabs.remove(index);
+
+            // Adjust active index
+            if self.active_tab_index >= self.tabs.len() {
+                self.active_tab_index = self.tabs.len().saturating_sub(1);
+            } else if self.active_tab_index > index {
+                self.active_tab_index = self.active_tab_index.saturating_sub(1);
+            }
+            if !self.tabs.is_empty() {
+                self.tab_bar_scroll_handle
+                    .scroll_to_item(self.active_tab_index);
+            }
+
+            // Focus the new active terminal
+            if let Some(tab) = self.tabs.get(self.active_tab_index) {
+                let tv = tab.root.first_terminal_view();
+                self.active_pane_id = tab.root.first_pane_id();
+                let focus_handle = tv.read(cx).focus_handle(cx);
+                focus_handle.focus(window, cx);
+            }
+
+            cx.notify();
+        }
+    }
+
+    fn close_tab_by_id(&mut self, tab_id: usize, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|t| t.id == tab_id) {
+            if self.tabs.len() <= 1 {
+                // Keep a placeholder - new tab will be created on next render
+                cx.notify();
+                return;
+            }
+
+            self.tabs.remove(index);
+
+            if self.active_tab_index >= self.tabs.len() {
+                self.active_tab_index = self.tabs.len().saturating_sub(1);
+            } else if self.active_tab_index > index {
+                self.active_tab_index = self.active_tab_index.saturating_sub(1);
+            }
+            if !self.tabs.is_empty() {
+                self.tab_bar_scroll_handle
+                    .scroll_to_item(self.active_tab_index);
+                if let Some(tab) = self.tabs.get(self.active_tab_index) {
+                    self.active_pane_id = tab.root.first_pane_id();
+                }
+            }
+
+            cx.notify();
+        }
+    }
+
+    fn has_multiple_panes(&self) -> bool {
+        if let Some(tab) = self.tabs.get(self.active_tab_index) {
+            matches!(&tab.root, PaneNode::Split { .. })
+        } else {
+            false
+        }
+    }
+
+    fn close_pane(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        let should_close_tab = if let Some(tab) = self.tabs.get_mut(self.active_tab_index) {
+            let should_close = tab.root.remove_pane(pane_id);
+            if !should_close {
+                // Update active pane to the first remaining pane
+                self.active_pane_id = tab.root.first_pane_id();
+            }
+            should_close
+        } else {
+            false
+        };
+
+        if should_close_tab {
+            if let Some(tab) = self.tabs.get(self.active_tab_index) {
+                let tab_id = tab.id;
+                self.close_tab_by_id(tab_id, cx);
+                return;
+            }
+        }
         cx.notify();
+    }
+
+    fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_new_tab(window, cx);
+    }
+
+    fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_tab(self.active_tab_index, window, cx);
+    }
+
+    fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            let next = (self.active_tab_index + 1) % self.tabs.len();
+            self.switch_to_tab(next, window, cx);
+        }
+    }
+
+    fn on_previous_tab(&mut self, _: &PreviousTab, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.is_empty() {
+            let prev = if self.active_tab_index == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab_index - 1
+            };
+            self.switch_to_tab(prev, window, cx);
+        }
     }
 
     fn toggle_sidebar(&mut self, _: &ToggleSidebar, _window: &mut Window, cx: &mut Context<Self>) {
@@ -436,6 +789,211 @@ impl AgentTermApp {
         cx.notify();
     }
 
+    fn on_split_right(&mut self, _: &SplitRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.split_active_pane(Axis::Horizontal, window, cx);
+    }
+
+    fn on_split_down(&mut self, _: &SplitDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.split_active_pane(Axis::Vertical, window, cx);
+    }
+
+    fn split_active_pane(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active_tab_index) else {
+            return;
+        };
+        let target_pane_id = self.active_pane_id;
+        let tab_id = tab.id;
+
+        let shell = platform_shell();
+        let mut env_vars: HashMap<String, String> = env::vars().collect();
+        env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+        env_vars.insert("COLORTERM".to_string(), "truecolor".to_string());
+        let window_id = window.window_handle().window_id().as_u64();
+        let working_dir = env::current_dir().ok().filter(|d| d.exists());
+        let terminal_task = TerminalBuilder::new(working_dir, shell, env_vars, None, window_id, cx);
+
+        let text_style = self.text_style.clone();
+        let new_pane_id = self.next_pane_id;
+        self.next_pane_id += 1;
+
+        let window_handle = window.window_handle();
+
+        cx.spawn(async move |view_handle, cx| {
+            let builder = match terminal_task.await {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Failed to create terminal for split: {e}");
+                    return;
+                }
+            };
+
+            let _ = cx.update_window(window_handle, |_, window, cx| {
+                let _ = view_handle.update(cx, |app, cx| {
+                    let terminal = cx.new(|cx| builder.subscribe(cx));
+                    terminal.update(cx, |terminal, _| {
+                        terminal.add_middleware(Arc::new(LoggingMiddleware::new()));
+                    });
+
+                    let terminal_view = cx.new(|cx| {
+                        TerminalView::new_with_style(terminal.clone(), text_style, window, cx)
+                    });
+
+                    app.subscribe_to_terminal_events(tab_id, new_pane_id, &terminal, cx);
+
+                    if let Some(tab) = app.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.root.split_pane(
+                            target_pane_id,
+                            axis,
+                            new_pane_id,
+                            terminal.clone(),
+                            terminal_view.clone(),
+                        );
+                    }
+
+                    app.active_pane_id = new_pane_id;
+                    let focus_handle = terminal_view.read(cx).focus_handle(cx);
+                    focus_handle.focus(window, cx);
+
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
+    fn render_pane_node(
+        &self,
+        node: &PaneNode,
+        id_prefix: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let active_border_color = theme.primary;
+        let hover_border_color = theme.border;
+        let transparent = rgba(0x00000000);
+
+        match node {
+            PaneNode::Leaf {
+                terminal_view,
+                pane_id,
+                ..
+            } => {
+                let pane_id = *pane_id;
+                let is_active = self.active_pane_id == pane_id;
+                let terminal_view_clone = terminal_view.clone();
+                let has_multiple_panes = self.has_multiple_panes();
+
+                div()
+                    .id(SharedString::from(format!("pane-{}", pane_id)))
+                    .group(SharedString::from(format!("pane-group-{}", pane_id)))
+                    .size_full()
+                    .overflow_hidden()
+                    .relative()
+                    .border_t_1()
+                    .when(is_active, |el| el.border_color(active_border_color))
+                    .when(!is_active, |el| el.border_color(transparent))
+                    .hover(|el| {
+                        if is_active {
+                            el.border_color(active_border_color)
+                        } else {
+                            el.border_color(hover_border_color)
+                        }
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.active_pane_id = pane_id;
+                            let focus_handle = terminal_view_clone.read(cx).focus_handle(cx);
+                            focus_handle.focus(window, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .child(terminal_view.clone())
+                    .when(!is_active && has_multiple_panes, |el| {
+                        el.child(
+                            div()
+                                .id(SharedString::from(format!("close-pane-{}", pane_id)))
+                                .absolute()
+                                .top_1()
+                                .right_1()
+                                .w(px(20.0))
+                                .h(px(20.0))
+                                .rounded_md()
+                                .cursor_pointer()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_xs()
+                                .text_color(rgb(TEXT_SUBTLE))
+                                .bg(rgba(0x00000080))
+                                .opacity(0.0)
+                                .group_hover(
+                                    SharedString::from(format!("pane-group-{}", pane_id)),
+                                    |s| s.opacity(1.0),
+                                )
+                                .hover(|s| s.bg(rgba(0xef444480)).text_color(rgb(0xffffff)))
+                                .child("×")
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                    cx.stop_propagation();
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.close_pane(pane_id, cx);
+                                })),
+                        )
+                    })
+                    .into_any_element()
+            }
+            PaneNode::Split { axis, children } => {
+                let id = SharedString::from(format!("{}-split", id_prefix));
+                let mut group = if axis.is_horizontal() {
+                    h_resizable(id)
+                } else {
+                    v_resizable(id)
+                };
+                for (i, child) in children.iter().enumerate() {
+                    let child_id = format!("{}-{}", id_prefix, i);
+                    let child_el = self.render_pane_node(child, &child_id, window, cx);
+                    group = group.child(resizable_panel().child(child_el));
+                }
+                group.into_any_element()
+            }
+        }
+    }
+
+    fn tab_scroll_step(&self) -> Pixels {
+        let viewport_width = self.tab_bar_scroll_handle.bounds().size.width;
+        if viewport_width == Pixels::ZERO {
+            px(160.0)
+        } else {
+            viewport_width * 0.6
+        }
+    }
+
+    fn scroll_tab_bar_by(&mut self, delta: Pixels) {
+        let max_offset = self.tab_bar_scroll_handle.max_offset();
+        if max_offset.width == Pixels::ZERO {
+            return;
+        }
+
+        let mut offset = self.tab_bar_scroll_handle.offset();
+        let next_x = (offset.x + delta).clamp(-max_offset.width, px(0.));
+        if next_x != offset.x {
+            offset.x = next_x;
+            self.tab_bar_scroll_handle.set_offset(offset);
+        }
+    }
+
+    fn scroll_tab_bar_left(&mut self) {
+        let step = self.tab_scroll_step();
+        self.scroll_tab_bar_by(step);
+    }
+
+    fn scroll_tab_bar_right(&mut self) {
+        let step = self.tab_scroll_step();
+        self.scroll_tab_bar_by(-step);
+    }
+
     fn switch_theme(&mut self, theme_name: SharedString, cx: &mut Context<Self>) {
         self.selected_theme = theme_name.clone();
         self.show_theme_menu = false;
@@ -443,10 +1001,14 @@ impl AgentTermApp {
         // Update the theme in ThemeManager
         ThemeManager::global_mut(cx).set_theme(&theme_name);
 
-        // Update the terminal view's theme
-        if let Some(terminal_view) = &self.terminal_view {
-            terminal_view.update(cx, |view, cx| {
-                view.set_theme(&theme_name, cx);
+        // Update all terminal views' themes
+        let mut views = Vec::new();
+        for tab in &self.tabs {
+            tab.root.collect_terminal_views(&mut views);
+        }
+        for view in views {
+            view.update(cx, |v, cx| {
+                v.set_theme(&theme_name, cx);
             });
         }
 
@@ -810,12 +1372,23 @@ impl AgentTermApp {
             )
     }
 
-    fn render_terminal_container(&self) -> impl IntoElement {
+    fn render_terminal_container(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let content_left = if self.sidebar_visible {
             self.sidebar_width + SIDEBAR_INSET + SIDEBAR_GAP
         } else {
             0.0
         };
+
+        let pane_element: Option<AnyElement> =
+            if let Some(tab) = self.tabs.get(self.active_tab_index) {
+                Some(self.render_pane_node(&tab.root, "root", window, cx))
+            } else {
+                None
+            };
 
         div()
             .id("terminal-container")
@@ -826,17 +1399,17 @@ impl AgentTermApp {
             .left(px(content_left))
             .flex()
             .flex_col()
-            .when_some(self.terminal_view.as_ref(), |el, tv| {
+            .when_some(pane_element, |el, pane_el| {
                 el.child(
                     div()
                         .flex_1()
                         .overflow_hidden()
                         .py(px(16.0))
                         .px(px(8.0))
-                        .child(tv.clone()),
+                        .child(pane_el),
                 )
             })
-            .when(self.terminal_view.is_none(), |el| {
+            .when(self.tabs.is_empty(), |el| {
                 el.flex()
                     .items_center()
                     .justify_center()
@@ -861,23 +1434,105 @@ fn icon_button(_icon_path: &str) -> impl IntoElement {
 }
 
 impl Render for AgentTermApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("agent-term-app")
-            .absolute()
-            .top_0()
-            .left_0()
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_tab_index = self.active_tab_index;
+
+        v_flex()
             .size_full()
-            .relative()
-            .bg(rgba(rgba_u32(SURFACE_ROOT, SURFACE_ROOT_ALPHA)))
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::toggle_sidebar))
-            .on_mouse_move(cx.listener(Self::update_sidebar_resize))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_sidebar_resize))
-            .child(self.render_terminal_container())
-            .when(self.sidebar_visible, |el| {
-                el.child(self.render_sidebar_shell(cx))
-            })
+            .child(
+                TitleBar::new().child(
+                    h_flex().flex_1().min_w(px(0.0)).overflow_x_hidden().child(
+                        TabBar::new("terminal-tabs")
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .track_scroll(&self.tab_bar_scroll_handle)
+                            .prefix(
+                                h_flex()
+                                    .mx_1()
+                                    .child(
+                                        Button::new("back")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::ArrowLeft)
+                                            .on_click(cx.listener(|this, _, _, _| {
+                                                this.scroll_tab_bar_left();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("forward")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::ArrowRight)
+                                            .on_click(cx.listener(|this, _, _, _| {
+                                                this.scroll_tab_bar_right();
+                                            })),
+                                    ),
+                            )
+                            .menu(true)
+                            .selected_index(active_tab_index)
+                            .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                                this.switch_to_tab(*ix, window, cx);
+                            }))
+                            .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
+                                Tab::new().label(tab.title.clone()).suffix(
+                                    div()
+                                        .id(("close-tab", ix))
+                                        .px(px(4.0))
+                                        .cursor_pointer()
+                                        .text_color(rgb(TEXT_SUBTLE))
+                                        .hover(|s| s.text_color(rgb(TEXT_PRIMARY)))
+                                        .child("×")
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.close_tab(ix, window, cx);
+                                        })),
+                                )
+                            }))
+                            .suffix(
+                                div()
+                                    .id("add-tab")
+                                    .px(px(8.0))
+                                    .py(px(4.0))
+                                    .cursor_pointer()
+                                    .text_color(rgb(TEXT_SUBTLE))
+                                    .hover(|s| s.text_color(rgb(TEXT_PRIMARY)).bg(rgba(0xffffff10)))
+                                    .child("+")
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation();
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.create_new_tab(window, cx);
+                                    })),
+                            ),
+                    ),
+                ),
+            )
+            .child(
+                div()
+                    .id("agent-term-app")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .relative()
+                    // .bg(rgba(rgba_u32(SURFACE_ROOT, SURFACE_ROOT_ALPHA)))
+                    .track_focus(&self.focus_handle)
+                    .on_action(cx.listener(Self::toggle_sidebar))
+                    .on_action(cx.listener(Self::on_new_tab))
+                    .on_action(cx.listener(Self::on_close_tab))
+                    .on_action(cx.listener(Self::on_next_tab))
+                    .on_action(cx.listener(Self::on_previous_tab))
+                    .on_action(cx.listener(Self::on_split_right))
+                    .on_action(cx.listener(Self::on_split_down))
+                    .on_mouse_move(cx.listener(Self::update_sidebar_resize))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_sidebar_resize))
+                    .child(self.render_terminal_container(window, cx))
+                    .when(self.sidebar_visible, |el| {
+                        el.child(self.render_sidebar_shell(cx))
+                    }),
+            )
     }
 }
 
