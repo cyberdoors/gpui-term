@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 gpui.workspace = true
 gpui_term = { path = "../../crates/gpui_term" }
-gpui-component = { path = "../../../gpui-component/crates/ui" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git" }
 anyhow.workspace = true
 log.workspace = true
 env_logger = "0.11"

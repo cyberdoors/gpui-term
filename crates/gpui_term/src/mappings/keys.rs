@@ -1,16 +1,27 @@
+// 标准库导入
 use std::borrow::Cow;
 
-/// The mappings defined in this file where created from reading the alacritty source
+/// 此文件中定义的映射是通过阅读alacritty源码创建的
+// Alacritty终端模式
 use alacritty_terminal::term::TermMode;
+// GPUI按键事件
 use gpui::Keystroke;
 
+/// Alacritty修饰键枚举
+/// 用于表示不同的键盘修饰键组合
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
+    /// 无修饰键
     None,
+    /// Alt键
     Alt,
+    /// Ctrl键
     Ctrl,
+    /// Shift键
     Shift,
+    /// Ctrl+Shift组合
     CtrlShift,
+    /// 其他修饰键组合
     Other,
 }
 

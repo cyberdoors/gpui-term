@@ -7,16 +7,47 @@ use anyhow::{Context, Result};
 use gpui::{Hsla, Rgba};
 use serde::{Deserialize, Serialize};
 
+/// 终端主题配置结构体
+/// 包含前景色、背景色、光标颜色等所有主题相关属性
 #[derive(Clone, Debug)]
 pub struct TerminalTheme {
+    /// 前景色（默认文本颜色）
+    /// 控制普通文本的显示颜色，通常是浅色
+    /// 对应ANSI颜色中的Foreground
     pub foreground: Hsla,
+    /// 背景色
+    /// 终端窗口的背景颜色，通常是深色
+    /// 对应ANSI颜色中的Background
     pub background: Hsla,
+    /// 光标颜色
+    /// 终端光标的显示颜色，用于指示当前输入位置
+    /// 对应ANSI颜色中的Cursor
     pub cursor: Hsla,
+    /// 选中区域背景色
+    /// 文本被选中时的高亮背景颜色
+    /// 用于文本选择的视觉反馈
     pub selection: Hsla,
+    /// 标准ANSI颜色（黑、红、绿、黄、蓝、洋红、青、白）
+    /// 对应ANSI转义序列中的颜色0-7：
+    /// [黑色, 红色, 绿色, 黄色, 蓝色, 洋红色, 青色, 白色]
+    /// 用于基本的色彩显示需求
     pub ansi: [Hsla; 8],
+    /// 高亮ANSI颜色
+    /// 对应ANSI转义序列中的颜色8-15（明亮版本）：
+    /// [亮黑色, 亮红色, 亮绿色, 亮黄色, 亮蓝色, 亮洋红色, 亮青色, 亮白色]
+    /// 提供更鲜艳的色彩选择
     pub bright: [Hsla; 8],
+    /// 暗淡ANSI颜色
+    /// 暗淡版本的标准ANSI颜色，用于特殊显示效果
+    /// 对应ANSI颜色中的DimBlack到DimWhite
     pub dim: [Hsla; 8],
+    /// 高亮前景色
+    /// 用于强调文本的明亮前景色
+    /// 对应ANSI颜色中的BrightForeground
     pub bright_foreground: Hsla,
+    /// 暗淡前景色
+    /// 用于次要文本的暗淡前景色
+    /// 对应ANSI颜色中的DimForeground
     pub dim_foreground: Hsla,
 }
 

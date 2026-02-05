@@ -24,8 +24,8 @@ use gpui_component::{
 };
 
 use gpui_term::{
-    Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal,
-    TerminalBuilder, TerminalContent, TerminalMiddleware, TerminalView,
+    Clear, Copy, Event, InputOrigin, Paste, SelectAll, Terminal, TerminalBuilder, TerminalContent,
+    TerminalMiddleware, TerminalView,
 };
 
 use theme_adapter::ComponentThemeExt;

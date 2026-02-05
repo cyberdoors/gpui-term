@@ -1,54 +1,71 @@
-//! Terminal entity wrapping Alacritty's terminal emulation.
+//! 封装Alacritty终端仿真的终端实体。
 //!
-//! This module provides the core Terminal struct that bridges GPUI with Alacritty's
-//! terminal emulator. It handles PTY communication, event processing, and provides
-//! a clean API for the terminal view to interact with.
+//! 此模块提供了核心的Terminal结构体，它在GPUI和Alacritty的
+//! 终端仿真器之间建立桥梁。处理PTY通信、事件处理，并为
+//! 终端视图提供干净的API进行交互。
 //!
-//! # Architecture
+//! # 架构设计
 //!
-//! The terminal system consists of:
-//! - `ZedListener`: Bridges Alacritty events to GPUI via an unbounded channel
-//! - `TerminalBounds`: Manages terminal dimensions (cells, pixels, bounds)
-//! - `TerminalContent`: Holds rendered output for display
-//! - `Terminal`: Main entity wrapping `Arc<FairMutex<Term<ZedListener>>>`
-//! - `TerminalBuilder`: Factory for creating terminals with PTY subscription
+//! 终端系统由以下组件组成：
+//! - `ZedListener`: 通过无界通道将Alacritty事件桥接到GPUI
+//! - `TerminalBounds`: 管理终端尺寸（单元格、像素、边界）
+//! - `TerminalContent`: 保存用于显示的渲染输出
+//! - `Terminal`: 主实体，包装了`Arc<FairMutex<Term<ZedListener>>>`
+//! - `TerminalBuilder`: 创建带有PTY订阅的终端的工厂
 //!
-//! # Event Processing
+//! # 事件处理
 //!
-//! Events from Alacritty are batched in 4ms windows to reduce UI update overhead.
-//! The event loop runs in a GPUI spawn task and processes events asynchronously.
+//! 来自Alacritty的事件以4毫秒窗口批量处理，以减少UI更新开销。
+//! 事件循环在GPUI生成任务中运行并异步处理事件。
 
+// 标准库导入
 use std::{
     borrow::Cow, cmp, collections::VecDeque, ops::Deref, path::PathBuf, sync::Arc, time::Duration,
 };
 
+// Alacritty终端库导入
 use alacritty_terminal::{
     Term,
+    // 事件系统相关
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
+    // 事件循环相关
     event_loop::{EventLoop, Msg, Notifier},
+    // 网格维度和滚动
     grid::{Dimensions, Scroll as AlacScroll},
+    // 索引和坐标系统
     index::{Column, Direction as AlacDirection, Line, Point as AlacPoint, Side},
+    // 选择功能
     selection::{Selection, SelectionRange, SelectionType},
+    // 同步原语
     sync::FairMutex,
+    // 终端配置和模式
     term::{Config, RenderableCursor, TermMode, cell::Cell},
+    // TTY接口
     tty,
+    // ANSI转义序列处理
     vte::ansi::{
         ClearMode, CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle, Handler,
     },
 };
+// 错误处理库
 use anyhow::{Context as _, Result};
+// 异步处理库
 use futures::{
     FutureExt, StreamExt,
     channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
+// GPUI框架导入
 use gpui::{
     App, Bounds, ClipboardItem, Context, EventEmitter, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Size, Task, TouchPhase, Window,
     px,
 };
 
+// 内部模块导入
 use crate::mappings::{
+    // 键盘映射
     keys::to_esc_str,
+    // 鼠标映射
     mouse::{
         alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
         scroll_report,
@@ -56,27 +73,41 @@ use crate::mappings::{
 };
 use crate::{InputOrigin, TerminalMiddleware};
 
+// 默认滚动历史行数
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
+// 最大滚动历史行数
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+// 调试模式下的终端宽度
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
+// 调试模式下的终端高度
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
+// 调试模式下的单元格宽度
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
+// 调试模式下的行高
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
 /// Events emitted by the Terminal for the view layer to handle.
+/// 终端向外发出的事件枚举
+/// 用于通知视图层终端状态的变化
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// Terminal title has changed
+    /// 终端标题已更改
+    /// 当终端接收到OSC标题设置命令时触发
     TitleChanged,
-    /// Bell character received
+    /// 接收到响铃字符
+    /// 当终端接收到ASCII BEL字符(\x07)时触发
     Bell,
-    /// Terminal content has changed and needs redraw
+    /// 终端内容已更改需要重绘
+    /// 当终端缓冲区内容更新时触发，提示UI需要刷新显示
     Wakeup,
-    /// Cursor blinking state changed
+    /// 光标闪烁状态已更改
+    /// 参数表示新的闪烁状态：true表示开启闪烁，false表示关闭闪烁
     BlinkChanged(bool),
-    /// Selection has changed
+    /// 选择区域已更改
+    /// 当用户选择文本或选择范围发生变化时触发
     SelectionsChanged,
-    /// Terminal process exited
+    /// 终端进程已退出
+    /// 当底层shell进程终止时触发
     CloseTerminal,
 }
 
@@ -95,17 +126,32 @@ impl EventListener for ZedListener {
     }
 }
 
-/// Internal events for terminal state management.
+/// 终端内部状态管理事件枚举
+/// 用于终端内部状态的异步更新和同步
 ///
-/// These events are queued and processed during sync to update terminal state.
+/// 这些事件会被排队并在同步过程中处理以更新终端状态
 #[derive(Clone)]
 enum InternalEvent {
+    /// 调整终端大小
+    /// 参数包含新的终端边界信息（尺寸、单元格大小等）
     Resize(TerminalBounds),
+    /// 清除终端屏幕
+    /// 清空当前显示内容，重置光标位置
     Clear,
+    /// 滚动终端内容
+    /// 参数指定滚动方向和距离
     Scroll(AlacScroll),
+    /// 滚动到指定的Alacritty点位置
+    /// 用于精确控制滚动位置
     ScrollToAlacPoint(AlacPoint),
+    /// 设置文本选择区域
+    /// 参数为可选的选择信息：(选择对象, 起始点)
     SetSelection(Option<(Selection, AlacPoint)>),
+    /// 更新选择区域
+    /// 参数为像素坐标点，用于实时更新拖拽选择
     UpdateSelection(Point<Pixels>),
+    /// 复制操作
+    /// 参数指定是否只复制选中内容：Some(true)表示只复制选中内容，None表示复制全部
     Copy(Option<bool>),
 }
 

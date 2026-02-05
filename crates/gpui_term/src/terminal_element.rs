@@ -1,62 +1,83 @@
-//! Terminal element for rendering terminal content in GPUI.
+//! 在GPUI中渲染终端内容的终端元素。
 //!
-//! This module provides the `TerminalElement` struct that implements GPUI's `Element` trait
-//! to render terminal content. It handles:
-//! - Batching adjacent cells with the same style for efficient rendering
-//! - Color conversion from Alacritty's color format to GPUI's Hsla
-//! - Cell flag handling (bold, italic, underline, strikethrough, dim)
-//! - Cursor rendering with support for block, bar, and underline shapes
+//! 此模块提供了实现GPUI的`Element` trait的`TerminalElement`结构体
+//! 来渲染终端内容。它处理：
+//! - 批量处理具有相同样式的相邻单元格以提高渲染效率
+//! - 从Alacritty的颜色格式转换到GPUI的Hsla格式
+//! - 单元格标志处理（粗体、斜体、下划线、删除线、暗淡）
+//! - 光标渲染，支持块状、条状和下划线形状
 //!
-//! # Architecture
+//! # 架构设计
 //!
-//! The rendering pipeline consists of three phases:
-//! 1. `request_layout` - Returns layout ID with the requested size
-//! 2. `prepaint` - Computes layout state: batched text runs, background rects, cursor
-//! 3. `paint` - Renders backgrounds, text runs, and cursor
+//! 渲染流水线包含三个阶段：
+//! 1. `request_layout` - 返回请求大小的布局ID
+//! 2. `prepaint` - 计算布局状态：批处理文本运行、背景矩形、光标
+//! 3. `paint` - 渲染背景、文本运行和光标
 //!
-//! # Example
+//! # 示例
 //!
 //! ```ignore
 //! let element = TerminalElement::new(terminal_entity, focus_handle, true, true, TextStyle::default());
 //! ```
 
+// 标准库导入
 use std::mem;
 
+// Alacritty终端库导入
 use alacritty_terminal::{
+    // 点坐标系统
     index::Point as AlacPoint,
+    // 选择范围
     selection::SelectionRange,
+    // 终端模式和单元格标志
     term::{TermMode, cell::Flags},
+    // ANSI颜色和光标形状
     vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor},
 };
+// GPUI框架导入
 use gpui::{
     AbsoluteLength, App, Bounds, ContentMask, Element, ElementId, Entity, FocusHandle, Font,
     FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, InputHandler, IntoElement, LayoutId,
     PathBuilder, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UTF16Selection,
     UnderlineStyle, Window, fill, point, px, size,
 };
+// 迭代工具库
 use itertools::Itertools;
 
+// 内部模块导入
 use crate::{
     IndexedCell, Terminal, TerminalBounds, TerminalConfig, TerminalContent, TerminalTheme,
 };
 
-/// Layout state computed during prepaint, used for painting.
+/// 在预绘制期间计算的布局状态，用于绘制
 pub struct LayoutState {
+    /// 点击框，用于鼠标交互检测
     hitbox: Hitbox,
+    /// 批处理的文本运行列表
     batched_text_runs: Vec<BatchedTextRun>,
+    /// 背景矩形列表
     background_rects: Vec<LayoutRect>,
+    /// 块状片段列表
     block_fragments: Vec<BlockFragment>,
+    /// 多边形片段列表
     polygon_fragments: Vec<PolygonFragment>,
+    /// 选择区域矩形列表
     selection_rects: Vec<LayoutRect>,
+    /// 光标布局信息
     cursor: Option<CursorLayout>,
+    /// 背景颜色
     background_color: Hsla,
+    /// 终端尺寸信息
     dimensions: TerminalBounds,
+    /// 终端模式
     mode: TermMode,
 }
 
-/// Helper for converting Alacritty cursor points to display coordinates.
+/// 将Alacritty光标点转换为显示坐标的辅助结构
 struct DisplayCursor {
+    /// 行号
     line: i32,
+    /// 列号
     col: usize,
 }
 

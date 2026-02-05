@@ -1,18 +1,18 @@
-//! Terminal view component for gpui-term.
+//! gpui-term的终端视图组件。
 //!
-//! This module provides the TerminalView struct which is the main GPUI entity
-//! that handles input events and renders the terminal using TerminalElement.
+//! 此模块提供TerminalView结构体，它是处理输入事件并使用TerminalElement
+//! 渲染终端的主要GPUI实体。
 //!
-//! # Architecture
+//! # 架构设计
 //!
-//! TerminalView acts as the glue between GPUI's event system and the Terminal entity.
-//! It:
-//! - Receives keyboard events and forwards them to the terminal via try_keystroke
-//! - Handles mouse events (down, up, move, scroll) for selection and mouse reporting
-//! - Provides copy/paste/clear/select_all actions bound to keyboard shortcuts
-//! - Subscribes to terminal events (Wakeup, Bell, TitleChanged, etc.) to update UI
+//! TerminalView充当GPUI事件系统和Terminal实体之间的粘合剂。
+//! 它：
+//! - 接收键盘事件并通过try_keystroke转发给终端
+//! - 处理鼠标事件（按下、释放、移动、滚动）用于选择和鼠标报告
+//! - 提供绑定到键盘快捷键的复制/粘贴/清除/全选操作
+//! - 订阅终端事件（唤醒、响铃、标题更改等）以更新UI
 //!
-//! # Example
+//! # 示例
 //!
 //! ```ignore
 //! let terminal = TerminalBuilder::new(...)?.subscribe(cx);
@@ -20,40 +20,47 @@
 //! let view = cx.new(|cx| TerminalView::new(terminal_entity, cx));
 //! ```
 
+// GPUI框架导入
 use gpui::{
     App, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
     ScrollWheelEvent, Styled, Window, actions, div,
 };
 
+// 内部模块导入
 use crate::{Event, Terminal, TerminalElement, TextStyle, ThemeManager};
 
+// 定义终端相关的操作动作
 actions!(
     terminal,
     [
-        Copy,
-        Paste,
-        Clear,
-        SelectAll,
-        ScrollLineUp,
-        ScrollLineDown,
-        ScrollPageUp,
-        ScrollPageDown,
-        ChangeTheme
+        Copy,           // 复制
+        Paste,          // 粘贴
+        Clear,          // 清除
+        SelectAll,      // 全选
+        ScrollLineUp,   // 向上滚动一行
+        ScrollLineDown, // 向下滚动一行
+        ScrollPageUp,   // 向上滚动一页
+        ScrollPageDown, // 向下滚动一页
+        ChangeTheme     // 更改主题
     ]
 );
 
-/// Main terminal view component that handles input and coordinates rendering.
+/// 主终端视图组件，处理输入并协调渲染。
 ///
-/// This struct wraps a Terminal entity and provides:
-/// - Focus management for keyboard input routing
-/// - Event handlers for keyboard and mouse input
-/// - Action handlers for clipboard operations and scrolling
-/// - Subscription to terminal events for UI updates
+/// 此结构体包装Terminal实体并提供：
+/// - 键盘输入路由的焦点管理
+/// - 键盘和鼠标输入的事件处理器
+/// - 剪贴板操作和滚动的动作处理器
+/// - 订阅终端事件以更新UI
 pub struct TerminalView {
+    /// 底层终端实体
     terminal: Entity<Terminal>,
+    /// 焦点句柄，用于管理输入焦点
     focus_handle: FocusHandle,
+    /// 是否有响铃标志
     has_bell: bool,
+    /// 文本样式配置
     text_style: crate::TextStyle,
 }
 

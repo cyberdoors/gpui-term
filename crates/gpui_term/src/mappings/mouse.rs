@@ -1,13 +1,22 @@
+// 标准库导入
 use std::cmp::{self, max, min};
 
+// Alacritty终端索引系统
 use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint, Side};
+// 终端模式
 use alacritty_terminal::term::TermMode;
+// GPUI鼠标和滚动事件
 use gpui::{Modifiers, MouseButton, Pixels, Point, ScrollWheelEvent, px};
 
+// 内部模块导入
 use crate::TerminalBounds;
 
+/// 鼠标报告格式枚举
+/// 定义不同的鼠标事件报告格式
 enum MouseFormat {
+    /// SGR (Select Graphic Rendition) 格式
     Sgr,
+    /// 普通格式，参数表示是否使用UTF-8编码
     Normal(bool),
 }
 
@@ -23,17 +32,29 @@ impl MouseFormat {
     }
 }
 
+/// Alacritty鼠标按钮枚举
+/// 映射GPUI鼠标事件到Alacritty的鼠标按钮标识
 #[derive(Debug)]
 enum AlacMouseButton {
+    /// 左键点击
     LeftButton = 0,
+    /// 中键点击
     MiddleButton = 1,
+    /// 右键点击
     RightButton = 2,
+    /// 左键移动
     LeftMove = 32,
+    /// 中键移动
     MiddleMove = 33,
+    /// 右键移动
     RightMove = 34,
+    /// 无按键移动
     NoneMove = 35,
+    /// 向上滚动
     ScrollUp = 64,
+    /// 向下滚动
     ScrollDown = 65,
+    /// 其他按钮
     Other = 99,
 }
 

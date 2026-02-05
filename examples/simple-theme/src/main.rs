@@ -12,13 +12,11 @@
 use std::env;
 
 use gpui::{
-    actions, div, prelude::FluentBuilder, rgb, App, AppContext, Application, Context, Entity,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, MouseButton,
-    MouseDownEvent, ParentElement, Render, Styled, Window, WindowOptions,
+    App, AppContext, Application, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render, Styled, Window,
+    WindowOptions, actions, div, prelude::FluentBuilder, rgb,
 };
-use gpui_term::{
-    Clear, Copy, Paste, SelectAll, TerminalBuilder, TerminalView, ThemeManager,
-};
+use gpui_term::{Clear, Copy, Paste, SelectAll, TerminalBuilder, TerminalView, ThemeManager};
 
 actions!(simple_theme, [Quit, ToggleToDark, ToggleToLight]);
 
@@ -148,22 +146,30 @@ impl Render for ThemeDemo {
                                     .flex_1()
                                     .on_mouse_down(
                                         MouseButton::Left,
-                                        cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
-                                            this.switch_to_dark(cx);
-                                        }),
+                                        cx.listener(
+                                            |this, _event: &MouseDownEvent, _window, cx| {
+                                                this.switch_to_dark(cx);
+                                            },
+                                        ),
                                     )
-                                    .child(self.render_theme_button("🌙 暗色".to_string(), is_dark)),
+                                    .child(
+                                        self.render_theme_button("🌙 暗色".to_string(), is_dark),
+                                    ),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .on_mouse_down(
                                         MouseButton::Left,
-                                        cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
-                                            this.switch_to_light(cx);
-                                        }),
+                                        cx.listener(
+                                            |this, _event: &MouseDownEvent, _window, cx| {
+                                                this.switch_to_light(cx);
+                                            },
+                                        ),
                                     )
-                                    .child(self.render_theme_button("☀️ 亮色".to_string(), is_light)),
+                                    .child(
+                                        self.render_theme_button("☀️ 亮色".to_string(), is_light),
+                                    ),
                             ),
                     )
                     .child(
@@ -175,23 +181,16 @@ impl Render for ThemeDemo {
             )
             .child(
                 // Terminal area
-                div()
-                    .flex_1()
-                    .w_full()
-                    .map(|el| {
-                        if let Some(terminal_view) = &self.terminal_view {
-                            el.child(terminal_view.clone())
-                        } else {
-                            el.flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .text_color(rgb(0xa6a6a6))
-                                        .child("正在加载终端..."),
-                                )
-                        }
-                    }),
+                div().flex_1().w_full().map(|el| {
+                    if let Some(terminal_view) = &self.terminal_view {
+                        el.child(terminal_view.clone())
+                    } else {
+                        el.flex()
+                            .items_center()
+                            .justify_center()
+                            .child(div().text_color(rgb(0xa6a6a6)).child("正在加载终端..."))
+                    }
+                }),
             )
     }
 }
@@ -283,7 +282,8 @@ fn main() {
                     let _ = cx.update_window(window_handle, |_, window, cx| {
                         let _ = view_weak.update(cx, |demo, cx| {
                             let terminal = cx.new(|cx| builder.subscribe(cx));
-                            let terminal_view = cx.new(|cx| TerminalView::new(terminal, window, cx));
+                            let terminal_view =
+                                cx.new(|cx| TerminalView::new(terminal, window, cx));
                             demo.set_terminal(terminal_view);
                             cx.notify();
                         });

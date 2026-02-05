@@ -1,47 +1,54 @@
-//! Theme management system for runtime theme switching.
+//! 运行时主题切换的主题管理系统。
 //!
-//! This module provides the ThemeManager which manages a collection of terminal themes
-//! and enables dynamic theme switching at runtime without requiring application restart.
+//! 此模块提供ThemeManager，它管理终端主题集合
+//! 并支持在运行时动态切换主题，无需重启应用程序。
 //!
-//! # Architecture
+//! # 架构设计
 //!
-//! - `ThemeManager` - Central manager for all themes, implemented as a GPUI Global
-//! - `ThemeDefinition` - Named theme with metadata
-//! - Preset themes: One Dark, One Light, Solarized Dark, Solarized Light, Dracula, Nord, Gruvbox Dark, Gruvbox Light, GitHub Light
-//! - Support for custom themes loaded from config
+//! - `ThemeManager` - 所有主题的中央管理器，实现为GPUI Global
+//! - `ThemeDefinition` - 带元数据的命名主题
+//! - 预设主题：One Dark、One Light、Solarized Dark、Solarized Light、Dracula、Nord、Gruvbox Dark、Gruvbox Light、GitHub Light
+//! - 支持从配置加载自定义主题
 //!
-//! # Usage
+//! # 使用示例
 //!
 //! ```ignore
-//! // Initialize theme manager
+//! // 初始化主题管理器
 //! let manager = ThemeManager::new(config);
 //! cx.set_global(manager);
 //!
-//! // Get current theme
+//! // 获取当前主题
 //! let theme = ThemeManager::global(cx).current_theme();
 //!
-//! // Switch theme
+//! // 切换主题
 //! ThemeManager::global_mut(cx).set_theme("Dracula");
 //! ```
 
+// 内部模块导入
 use crate::{TerminalTheme, TerminalThemeConfig, hsla_from_rgb};
+// GPUI框架导入
 use gpui::{App, Global};
+// 标准库导入
 use std::collections::HashMap;
 
-/// A named theme definition with metadata.
+/// 带元数据的命名主题定义
 #[derive(Clone, Debug)]
 pub struct ThemeDefinition {
+    /// 主题名称
     pub name: String,
+    /// 主题配置
     pub theme: TerminalTheme,
 }
 
-/// Central theme manager for runtime theme switching.
+/// 运行时主题切换的中央主题管理器
 ///
-/// The ThemeManager maintains a collection of available themes and tracks
-/// the currently active theme. It's designed as a GPUI Global to be accessible
-/// throughout the application.
+/// ThemeManager维护可用主题集合并跟踪
+/// 当前活动的主题。它被设计为GPUI Global，
+/// 以便在整个应用程序中可访问。
 pub struct ThemeManager {
+    /// 可用主题的哈希映射
     themes: HashMap<String, ThemeDefinition>,
+    /// 当前主题名称
     current_theme_name: String,
 }
 
