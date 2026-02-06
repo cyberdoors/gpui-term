@@ -104,9 +104,11 @@ impl ThemeAdapter {
             component_theme
                 .base_green_light()
                 .unwrap_or_else(|| ansi[2].lighten(0.2)),
-            component_theme
-                .base_yellow_light()
-                .unwrap_or_else(|| ansi[3].lighten(0.2)),
+            // 用户输入颜色，浅黄色太不明显了
+            // component_theme
+            //     .base_yellow_light()
+            //     .unwrap_or_else(|| ansi[3].lighten(0.9)),
+            ansi[2].lighten(0.2), // 绿色
             component_theme
                 .base_blue_light()
                 .unwrap_or_else(|| ansi[4].lighten(0.2)),

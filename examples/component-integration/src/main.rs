@@ -61,23 +61,7 @@ impl TerminalMiddleware for SimpleLogger {
 
 // Platform-specific shell detection
 fn platform_shell() -> Option<String> {
-    #[cfg(target_os = "windows")]
-    {
-        env::var("COMSPEC")
-            .ok()
-            .or_else(|| Some("cmd.exe".to_string()))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        env::var("SHELL").ok().or_else(|| {
-            if std::path::Path::new("/bin/zsh").exists() {
-                Some("/bin/zsh".to_string())
-            } else {
-                Some("/bin/bash".to_string())
-            }
-        })
-    }
+    Some("C:/Program Files/PowerShell/7/pwsh.exe".to_string())
 }
 
 // Keybindings

@@ -138,6 +138,7 @@ impl TerminalTheme {
     }
 }
 
+/// 默认主题
 impl Default for TerminalTheme {
     fn default() -> Self {
         let ansi = [
