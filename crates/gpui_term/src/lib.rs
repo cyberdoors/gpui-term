@@ -1,3 +1,4 @@
+mod block;
 mod config;
 mod mappings;
 mod middleware;
@@ -6,6 +7,7 @@ mod terminal_element;
 mod terminal_view;
 mod theme_manager;
 
+pub use block::{Block, BlockDetection};
 pub use config::{TerminalConfig, TerminalTheme, TerminalThemeConfig, hsla_from_rgb};
 pub use middleware::{InputOrigin, TerminalMiddleware};
 pub use terminal::{

@@ -55,6 +55,7 @@ use crate::mappings::{
     },
 };
 use crate::{InputOrigin, TerminalMiddleware};
+use crate::block::{Block, BlockTracker};
 
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
@@ -469,6 +470,7 @@ impl TerminalBuilder {
                 selection_phase: SelectionPhase::Ended,
                 middlewares: Vec::new(),
                 event_loop_task: Task::ready(Ok(())),
+                block_tracker: BlockTracker::new(),
             };
 
             Ok(TerminalBuilder {
@@ -558,6 +560,7 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     middlewares: Vec<Arc<dyn TerminalMiddleware>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
+    block_tracker: BlockTracker,
 }
 
 impl Terminal {
@@ -613,6 +616,16 @@ impl Terminal {
 
     /// Sends input to the terminal with origin metadata.
     pub fn input_with_origin(&mut self, input: impl Into<Cow<'static, [u8]>>, origin: InputOrigin) {
+        let input = input.into();
+
+        // Detect Enter key from user input to start block tracking
+        if matches!(origin, InputOrigin::Keystroke | InputOrigin::Text)
+            && input.as_ref() == b"\x0d"
+        {
+            let term = self.term.lock();
+            self.block_tracker.on_enter(&term);
+        }
+
         if self.write_to_pty(input, origin) {
             self.events
                 .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
@@ -677,6 +690,10 @@ impl Terminal {
         }
 
         self.last_content = Self::make_content(&terminal, &self.last_content);
+
+        // Check for prompt detection to finalize blocks
+        self.block_tracker.on_sync(&terminal, &self.last_content);
+
         drop(terminal);
         self.notify_middlewares_output(&self.last_content);
     }
@@ -783,6 +800,41 @@ impl Terminal {
 
     pub fn last_content(&self) -> &TerminalContent {
         &self.last_content
+    }
+
+    /// Returns all finalized blocks.
+    pub fn blocks(&self) -> &[Block] {
+        self.block_tracker.blocks()
+    }
+
+    /// Returns the most recently finalized block.
+    pub fn current_block(&self) -> Option<&Block> {
+        self.block_tracker.current_block()
+    }
+
+    /// Returns true if a command is currently running (between Enter and next prompt).
+    pub fn block_running(&self) -> bool {
+        self.block_tracker.is_running()
+    }
+
+    /// Returns all terminal text (scrollback history + visible screen) as the final state.
+    pub fn get_all_text(&self) -> String {
+        let term = self.term.lock();
+        let topmost = term.topmost_line();
+        let bottommost = term.bottommost_line();
+        let cols = term.grid().columns();
+
+        let mut text = String::new();
+        for line_idx in topmost.0..=bottommost.0 {
+            let row = &term.grid()[Line(line_idx)];
+            let mut line_text = String::with_capacity(cols);
+            for col in 0..cols {
+                line_text.push(row[Column(col)].c);
+            }
+            text.push_str(line_text.trim_end());
+            text.push('\n');
+        }
+        text
     }
 
     pub fn mouse_mode(&self, shift: bool) -> bool {

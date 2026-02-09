@@ -33,4 +33,7 @@ pub trait TerminalMiddleware: Send + Sync {
 
     /// Observe rendered output snapshots.
     fn on_output(&self, _content: &TerminalContent) {}
+
+    /// Observe raw PTY output bytes (for future OSC 133 processing).
+    fn on_raw_pty_output(&self, _bytes: &[u8]) {}
 }

@@ -143,13 +143,9 @@ impl ThemeManager {
         ThemeDefinition {
             name: "One Dark".to_string(),
             theme: TerminalTheme {
-                foreground: hsla_from_rgb(0xD4, 0xD4, 0xD4),
-                background: {
-                    let mut bg = hsla_from_rgb(0x1E, 0x1E, 0x1E);
-                    bg.a = 0.22;
-                    bg
-                },
-                cursor: hsla_from_rgb(0xAE, 0xAF, 0xAD),
+                foreground: hsla_from_rgb(0xAB, 0xB2, 0xBF),
+                background: hsla_from_rgb(0x28, 0x2C, 0x34),
+                cursor: hsla_from_rgb(0x52, 0x8B, 0xFF),
                 selection: gpui::Hsla {
                     h: 0.58,
                     s: 0.36,
@@ -157,7 +153,7 @@ impl ThemeManager {
                     a: 0.55,
                 },
                 ansi: [
-                    hsla_from_rgb(0x1E, 0x1E, 0x1E), // Black
+                    hsla_from_rgb(0x3F, 0x44, 0x51), // Black
                     hsla_from_rgb(0xE0, 0x6C, 0x75), // Red
                     hsla_from_rgb(0x98, 0xC3, 0x79), // Green
                     hsla_from_rgb(0xE5, 0xC0, 0x7B), // Yellow
@@ -174,10 +170,10 @@ impl ThemeManager {
                     hsla_from_rgb(0x61, 0xAF, 0xEF), // Bright Blue
                     hsla_from_rgb(0xC6, 0x78, 0xDD), // Bright Magenta
                     hsla_from_rgb(0x56, 0xB6, 0xC2), // Bright Cyan
-                    hsla_from_rgb(0xDF, 0xDF, 0xDF), // Bright White
+                    hsla_from_rgb(0xFF, 0xFF, 0xFF), // Bright White
                 ],
                 dim: [
-                    hsla_from_rgb(0x1E, 0x1E, 0x1E),
+                    hsla_from_rgb(0x2C, 0x31, 0x3A),
                     hsla_from_rgb(0xBE, 0x5B, 0x65),
                     hsla_from_rgb(0x7A, 0x9F, 0x60),
                     hsla_from_rgb(0xD1, 0x9A, 0x66),
@@ -186,7 +182,7 @@ impl ThemeManager {
                     hsla_from_rgb(0x44, 0x91, 0x9B),
                     hsla_from_rgb(0x8A, 0x8F, 0x98),
                 ],
-                bright_foreground: hsla_from_rgb(0xDF, 0xDF, 0xDF),
+                bright_foreground: hsla_from_rgb(0xFF, 0xFF, 0xFF),
                 dim_foreground: hsla_from_rgb(0x8A, 0x8F, 0x98),
             },
         }
@@ -198,11 +194,7 @@ impl ThemeManager {
             name: "Solarized Dark".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0x83, 0x94, 0x96), // base0
-                background: {
-                    let mut bg = hsla_from_rgb(0x00, 0x2B, 0x36); // base03
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0x00, 0x2B, 0x36), // base03
                 cursor: hsla_from_rgb(0x83, 0x94, 0x96),
                 selection: gpui::Hsla {
                     h: 0.48,
@@ -252,11 +244,7 @@ impl ThemeManager {
             name: "Dracula".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0xF8, 0xF8, 0xF2),
-                background: {
-                    let mut bg = hsla_from_rgb(0x28, 0x2A, 0x36);
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0x28, 0x2A, 0x36),
                 cursor: hsla_from_rgb(0xF8, 0xF8, 0xF2),
                 selection: gpui::Hsla {
                     h: 0.76,
@@ -265,37 +253,37 @@ impl ThemeManager {
                     a: 0.50,
                 },
                 ansi: [
-                    hsla_from_rgb(0x00, 0x00, 0x00), // Black
+                    hsla_from_rgb(0x21, 0x22, 0x2C), // Black
                     hsla_from_rgb(0xFF, 0x55, 0x55), // Red
                     hsla_from_rgb(0x50, 0xFA, 0x7B), // Green
                     hsla_from_rgb(0xF1, 0xFA, 0x8C), // Yellow
-                    hsla_from_rgb(0xBD, 0x93, 0xF9), // Blue (actually purple)
+                    hsla_from_rgb(0xBD, 0x93, 0xF9), // Blue (purple)
                     hsla_from_rgb(0xFF, 0x79, 0xC6), // Magenta (pink)
                     hsla_from_rgb(0x8B, 0xE9, 0xFD), // Cyan
-                    hsla_from_rgb(0xBB, 0xBB, 0xBB), // White
+                    hsla_from_rgb(0xF8, 0xF8, 0xF2), // White
                 ],
                 bright: [
-                    hsla_from_rgb(0x55, 0x55, 0x55), // Bright Black
-                    hsla_from_rgb(0xFF, 0x55, 0x55), // Bright Red
-                    hsla_from_rgb(0x50, 0xFA, 0x7B), // Bright Green
-                    hsla_from_rgb(0xF1, 0xFA, 0x8C), // Bright Yellow
-                    hsla_from_rgb(0xBD, 0x93, 0xF9), // Bright Blue
-                    hsla_from_rgb(0xFF, 0x79, 0xC6), // Bright Magenta
-                    hsla_from_rgb(0x8B, 0xE9, 0xFD), // Bright Cyan
+                    hsla_from_rgb(0x62, 0x72, 0xA4), // Bright Black
+                    hsla_from_rgb(0xFF, 0x6E, 0x6E), // Bright Red
+                    hsla_from_rgb(0x69, 0xFF, 0x94), // Bright Green
+                    hsla_from_rgb(0xFF, 0xFF, 0xA5), // Bright Yellow
+                    hsla_from_rgb(0xD6, 0xAC, 0xFF), // Bright Blue
+                    hsla_from_rgb(0xFF, 0x92, 0xDF), // Bright Magenta
+                    hsla_from_rgb(0xA4, 0xFF, 0xFF), // Bright Cyan
                     hsla_from_rgb(0xFF, 0xFF, 0xFF), // Bright White
                 ],
                 dim: [
-                    hsla_from_rgb(0x00, 0x00, 0x00),
+                    hsla_from_rgb(0x21, 0x22, 0x2C),
                     hsla_from_rgb(0xCC, 0x44, 0x44),
                     hsla_from_rgb(0x40, 0xC8, 0x62),
                     hsla_from_rgb(0xC1, 0xC8, 0x70),
                     hsla_from_rgb(0x97, 0x76, 0xC7),
                     hsla_from_rgb(0xCC, 0x61, 0x9E),
                     hsla_from_rgb(0x6F, 0xBA, 0xCA),
-                    hsla_from_rgb(0x95, 0x95, 0x95),
+                    hsla_from_rgb(0xC0, 0xC0, 0xC0),
                 ],
                 bright_foreground: hsla_from_rgb(0xFF, 0xFF, 0xFF),
-                dim_foreground: hsla_from_rgb(0x95, 0x95, 0x95),
+                dim_foreground: hsla_from_rgb(0xC0, 0xC0, 0xC0),
             },
         }
     }
@@ -306,11 +294,7 @@ impl ThemeManager {
             name: "Nord".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0xD8, 0xDE, 0xE9), // Nord4
-                background: {
-                    let mut bg = hsla_from_rgb(0x2E, 0x34, 0x40); // Nord0
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0x2E, 0x34, 0x40), // Nord0
                 cursor: hsla_from_rgb(0xD8, 0xDE, 0xE9),
                 selection: gpui::Hsla {
                     h: 0.62,
@@ -329,7 +313,7 @@ impl ThemeManager {
                     hsla_from_rgb(0xE5, 0xE9, 0xF0), // Nord5
                 ],
                 bright: [
-                    hsla_from_rgb(0x4C, 0x56, 0x6A), // Nord2
+                    hsla_from_rgb(0x4C, 0x56, 0x6A), // Nord3
                     hsla_from_rgb(0xBF, 0x61, 0x6A), // Nord11
                     hsla_from_rgb(0xA3, 0xBE, 0x8C), // Nord14
                     hsla_from_rgb(0xEB, 0xCB, 0x8B), // Nord13
@@ -360,11 +344,7 @@ impl ThemeManager {
             name: "Gruvbox Dark".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0xEB, 0xDB, 0xB2), // fg
-                background: {
-                    let mut bg = hsla_from_rgb(0x28, 0x28, 0x28); // bg0
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0x28, 0x28, 0x28), // bg0
                 cursor: hsla_from_rgb(0xEB, 0xDB, 0xB2),
                 selection: gpui::Hsla {
                     h: 0.11,
@@ -414,12 +394,8 @@ impl ThemeManager {
             name: "One Light".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0x38, 0x3A, 0x42), // fg
-                background: {
-                    let mut bg = hsla_from_rgb(0xFA, 0xFA, 0xFA); // bg
-                    bg.a = 0.22;
-                    bg
-                },
-                cursor: hsla_from_rgb(0x52, 0x67, 0x72),
+                background: hsla_from_rgb(0xFA, 0xFA, 0xFA), // bg
+                cursor: hsla_from_rgb(0x52, 0x6F, 0xFF),
                 selection: gpui::Hsla {
                     h: 0.58,
                     s: 0.25,
@@ -427,17 +403,17 @@ impl ThemeManager {
                     a: 0.50,
                 },
                 ansi: [
-                    hsla_from_rgb(0xFA, 0xFA, 0xFA), // Black (bg)
+                    hsla_from_rgb(0x38, 0x3A, 0x42), // Black
                     hsla_from_rgb(0xE4, 0x56, 0x49), // Red
                     hsla_from_rgb(0x50, 0xA1, 0x4F), // Green
                     hsla_from_rgb(0xC1, 0x84, 0x01), // Yellow
                     hsla_from_rgb(0x40, 0x78, 0xF2), // Blue
                     hsla_from_rgb(0xA6, 0x26, 0xA4), // Magenta
                     hsla_from_rgb(0x01, 0x84, 0xBC), // Cyan
-                    hsla_from_rgb(0x38, 0x3A, 0x42), // White (fg)
+                    hsla_from_rgb(0xA0, 0xA1, 0xA7), // White
                 ],
                 bright: [
-                    hsla_from_rgb(0xA0, 0xA1, 0xA7), // Bright Black
+                    hsla_from_rgb(0x69, 0x6C, 0x77), // Bright Black
                     hsla_from_rgb(0xE4, 0x56, 0x49), // Bright Red
                     hsla_from_rgb(0x50, 0xA1, 0x4F), // Bright Green
                     hsla_from_rgb(0xC1, 0x84, 0x01), // Bright Yellow
@@ -447,7 +423,7 @@ impl ThemeManager {
                     hsla_from_rgb(0x09, 0x0A, 0x0B), // Bright White
                 ],
                 dim: [
-                    hsla_from_rgb(0xC0, 0xC0, 0xC0),
+                    hsla_from_rgb(0x69, 0x6C, 0x77),
                     hsla_from_rgb(0xB8, 0x45, 0x3A),
                     hsla_from_rgb(0x40, 0x81, 0x3F),
                     hsla_from_rgb(0x9A, 0x6A, 0x01),
@@ -468,11 +444,7 @@ impl ThemeManager {
             name: "Solarized Light".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0x65, 0x7B, 0x83), // base00
-                background: {
-                    let mut bg = hsla_from_rgb(0xFD, 0xF6, 0xE3); // base3
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0xFD, 0xF6, 0xE3), // base3
                 cursor: hsla_from_rgb(0x65, 0x7B, 0x83),
                 selection: gpui::Hsla {
                     h: 0.48,
@@ -481,23 +453,23 @@ impl ThemeManager {
                     a: 0.45,
                 },
                 ansi: [
-                    hsla_from_rgb(0xEE, 0xE8, 0xD5), // base2
+                    hsla_from_rgb(0x07, 0x36, 0x42), // base02
                     hsla_from_rgb(0xDC, 0x32, 0x2F), // red
                     hsla_from_rgb(0x85, 0x99, 0x00), // green
                     hsla_from_rgb(0xB5, 0x89, 0x00), // yellow
                     hsla_from_rgb(0x26, 0x8B, 0xD2), // blue
                     hsla_from_rgb(0xD3, 0x36, 0x82), // magenta
                     hsla_from_rgb(0x2A, 0xA1, 0x98), // cyan
-                    hsla_from_rgb(0x07, 0x36, 0x42), // base02
+                    hsla_from_rgb(0xEE, 0xE8, 0xD5), // base2
                 ],
                 bright: [
-                    hsla_from_rgb(0xFD, 0xF6, 0xE3), // base3
+                    hsla_from_rgb(0x00, 0x2B, 0x36), // base03
                     hsla_from_rgb(0xCB, 0x4B, 0x16), // orange
-                    hsla_from_rgb(0x93, 0xA1, 0xA1), // base1
-                    hsla_from_rgb(0x83, 0x94, 0x96), // base0
-                    hsla_from_rgb(0x65, 0x7B, 0x83), // base00
-                    hsla_from_rgb(0x6C, 0x71, 0xC4), // violet
                     hsla_from_rgb(0x58, 0x6E, 0x75), // base01
+                    hsla_from_rgb(0x65, 0x7B, 0x83), // base00
+                    hsla_from_rgb(0x83, 0x94, 0x96), // base0
+                    hsla_from_rgb(0x6C, 0x71, 0xC4), // violet
+                    hsla_from_rgb(0x93, 0xA1, 0xA1), // base1
                     hsla_from_rgb(0x00, 0x2B, 0x36), // base03
                 ],
                 dim: [
@@ -522,11 +494,7 @@ impl ThemeManager {
             name: "GitHub Light".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0x24, 0x29, 0x2E), // fg.default
-                background: {
-                    let mut bg = hsla_from_rgb(0xFF, 0xFF, 0xFF); // canvas.default
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0xFF, 0xFF, 0xFF), // canvas.default
                 cursor: hsla_from_rgb(0x04, 0x4A, 0x89),
                 selection: gpui::Hsla {
                     h: 0.60,
@@ -535,27 +503,27 @@ impl ThemeManager {
                     a: 0.45,
                 },
                 ansi: [
-                    hsla_from_rgb(0xFF, 0xFF, 0xFF), // Black (white bg)
+                    hsla_from_rgb(0x24, 0x29, 0x2E), // Black
                     hsla_from_rgb(0xCF, 0x22, 0x2E), // Red
-                    hsla_from_rgb(0x22, 0x86, 0x3A), // Green
-                    hsla_from_rgb(0xDB, 0xAB, 0x09), // Yellow
-                    hsla_from_rgb(0x03, 0x66, 0xD6), // Blue
-                    hsla_from_rgb(0x84, 0x50, 0xEB), // Magenta
-                    hsla_from_rgb(0x17, 0x79, 0xBA), // Cyan
-                    hsla_from_rgb(0x24, 0x29, 0x2E), // White (fg)
+                    hsla_from_rgb(0x11, 0x6B, 0x29), // Green
+                    hsla_from_rgb(0x4D, 0x2D, 0x00), // Yellow
+                    hsla_from_rgb(0x03, 0x49, 0xB4), // Blue
+                    hsla_from_rgb(0x58, 0x41, 0x93), // Magenta
+                    hsla_from_rgb(0x0E, 0x60, 0x94), // Cyan
+                    hsla_from_rgb(0x6E, 0x77, 0x81), // White
                 ],
                 bright: [
-                    hsla_from_rgb(0x6A, 0x73, 0x7D), // Bright Black
-                    hsla_from_rgb(0xCF, 0x22, 0x2E), // Bright Red
-                    hsla_from_rgb(0x22, 0x86, 0x3A), // Bright Green
-                    hsla_from_rgb(0xDB, 0xAB, 0x09), // Bright Yellow
-                    hsla_from_rgb(0x03, 0x66, 0xD6), // Bright Blue
-                    hsla_from_rgb(0x84, 0x50, 0xEB), // Bright Magenta
-                    hsla_from_rgb(0x17, 0x79, 0xBA), // Bright Cyan
-                    hsla_from_rgb(0x00, 0x00, 0x00), // Bright White (black)
+                    hsla_from_rgb(0x57, 0x60, 0x6A), // Bright Black
+                    hsla_from_rgb(0xA4, 0x00, 0x00), // Bright Red
+                    hsla_from_rgb(0x11, 0x6B, 0x29), // Bright Green
+                    hsla_from_rgb(0x4D, 0x2D, 0x00), // Bright Yellow
+                    hsla_from_rgb(0x03, 0x49, 0xB4), // Bright Blue
+                    hsla_from_rgb(0x58, 0x41, 0x93), // Bright Magenta
+                    hsla_from_rgb(0x0E, 0x60, 0x94), // Bright Cyan
+                    hsla_from_rgb(0x24, 0x29, 0x2E), // Bright White
                 ],
                 dim: [
-                    hsla_from_rgb(0xD0, 0xD7, 0xDE),
+                    hsla_from_rgb(0x8C, 0x95, 0x9F),
                     hsla_from_rgb(0xA4, 0x1B, 0x24),
                     hsla_from_rgb(0x1B, 0x6B, 0x2E),
                     hsla_from_rgb(0xAF, 0x89, 0x07),
@@ -565,7 +533,7 @@ impl ThemeManager {
                     hsla_from_rgb(0x1C, 0x21, 0x25),
                 ],
                 bright_foreground: hsla_from_rgb(0x00, 0x00, 0x00),
-                dim_foreground: hsla_from_rgb(0x6A, 0x73, 0x7D),
+                dim_foreground: hsla_from_rgb(0x6E, 0x77, 0x81),
             },
         }
     }
@@ -576,11 +544,7 @@ impl ThemeManager {
             name: "Gruvbox Light".to_string(),
             theme: TerminalTheme {
                 foreground: hsla_from_rgb(0x3C, 0x38, 0x36), // fg (dark1)
-                background: {
-                    let mut bg = hsla_from_rgb(0xFB, 0xF1, 0xC7); // bg0_h
-                    bg.a = 0.22;
-                    bg
-                },
+                background: hsla_from_rgb(0xFB, 0xF1, 0xC7), // bg0_h
                 cursor: hsla_from_rgb(0x3C, 0x38, 0x36),
                 selection: gpui::Hsla {
                     h: 0.11,
@@ -589,7 +553,7 @@ impl ThemeManager {
                     a: 0.45,
                 },
                 ansi: [
-                    hsla_from_rgb(0xFB, 0xF1, 0xC7), // bg0_h
+                    hsla_from_rgb(0x3C, 0x38, 0x36), // dark1
                     hsla_from_rgb(0xCC, 0x24, 0x1D), // red
                     hsla_from_rgb(0x98, 0x97, 0x1A), // green
                     hsla_from_rgb(0xD7, 0x99, 0x21), // yellow
@@ -599,7 +563,7 @@ impl ThemeManager {
                     hsla_from_rgb(0x7C, 0x6F, 0x64), // fg4
                 ],
                 bright: [
-                    hsla_from_rgb(0x92, 0x83, 0x74), // gray
+                    hsla_from_rgb(0x66, 0x5C, 0x54), // dark4
                     hsla_from_rgb(0x9D, 0x00, 0x06), // bright red
                     hsla_from_rgb(0x79, 0x74, 0x0E), // bright green
                     hsla_from_rgb(0xB5, 0x76, 0x14), // bright yellow
@@ -609,7 +573,7 @@ impl ThemeManager {
                     hsla_from_rgb(0x28, 0x28, 0x28), // fg0 (dark)
                 ],
                 dim: [
-                    hsla_from_rgb(0xEB, 0xDB, 0xB2),
+                    hsla_from_rgb(0xA8, 0x99, 0x84),
                     hsla_from_rgb(0xFB, 0x49, 0x34),
                     hsla_from_rgb(0xB8, 0xBB, 0x26),
                     hsla_from_rgb(0xFA, 0xBD, 0x2F),

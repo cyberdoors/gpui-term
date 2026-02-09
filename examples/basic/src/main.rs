@@ -47,7 +47,8 @@ actions!(
         SplitDown,
         SaveWorkspace,
         RestoreWorkspace,
-        ToggleSearch
+        ToggleSearch,
+        DumpText
     ]
 );
 
@@ -201,6 +202,7 @@ fn platform_keybindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
             KeyBinding::new("ctrl-shift-d", SplitRight, None),
             KeyBinding::new("ctrl-alt-d", SplitDown, None),
+            KeyBinding::new("ctrl-shift-g", DumpText, None),
         ]);
     }
 
@@ -527,6 +529,18 @@ impl PaneNode {
             }
         }
     }
+
+    fn find_terminal(&self, target_pane_id: usize) -> Option<&Entity<Terminal>> {
+        match self {
+            PaneNode::Leaf {
+                pane_id, terminal, ..
+            } if *pane_id == target_pane_id => Some(terminal),
+            PaneNode::Split { children, .. } => {
+                children.iter().find_map(|c| c.find_terminal(target_pane_id))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Represents a single terminal tab session
@@ -837,6 +851,39 @@ impl AgentTermApp {
 
     fn on_split_down(&mut self, _: &SplitDown, window: &mut Window, cx: &mut Context<Self>) {
         self.split_active_pane(Axis::Vertical, window, cx);
+    }
+
+    fn on_dump_text(&mut self, _: &DumpText, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active_tab_index) else {
+            return;
+        };
+        let Some(terminal) = tab.root.find_terminal(self.active_pane_id) else {
+            return;
+        };
+        let terminal = terminal.read(cx);
+
+        // Dump blocks
+        let blocks = terminal.blocks();
+        eprintln!("=== Terminal Blocks ({}) ===", blocks.len());
+        for block in blocks {
+            eprintln!("[Block #{}] command: {:?}", block.id, block.command);
+            eprintln!("  detection: {:?}", block.detection);
+            if let Some(code) = block.exit_code {
+                eprintln!("  exit_code: {}", code);
+            }
+            eprintln!("  output:");
+            for line in block.output.lines() {
+                eprintln!("    {}", line);
+            }
+            eprintln!("---");
+        }
+        if terminal.block_running() {
+            eprintln!("[Block tracker: command running]");
+        }
+
+        // Also dump full text
+        let text = terminal.get_all_text();
+        eprintln!("=== Terminal Full Text ===\n{}\n=== End ===", text);
     }
 
     fn split_active_pane(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
@@ -2051,6 +2098,7 @@ impl Render for AgentTermApp {
                     .on_action(cx.listener(Self::on_previous_tab))
                     .on_action(cx.listener(Self::on_split_right))
                     .on_action(cx.listener(Self::on_split_down))
+                    .on_action(cx.listener(Self::on_dump_text))
                     .on_mouse_move(cx.listener(Self::update_sidebar_resize))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::stop_sidebar_resize))
                     .child(self.render_terminal_container(window, cx))
