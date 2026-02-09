@@ -40,6 +40,9 @@ use crate::{
     IndexedCell, Terminal, TerminalBounds, TerminalConfig, TerminalContent, TerminalTheme,
 };
 
+const SCROLLBAR_WIDTH: f32 = 8.0;
+const SCROLLBAR_THUMB_MIN_HEIGHT: f32 = 20.0;
+
 /// Layout state computed during prepaint, used for painting.
 pub struct LayoutState {
     hitbox: Hitbox,
@@ -50,8 +53,11 @@ pub struct LayoutState {
     selection_rects: Vec<LayoutRect>,
     cursor: Option<CursorLayout>,
     background_color: Hsla,
+    foreground_color: Hsla,
     dimensions: TerminalBounds,
     mode: TermMode,
+    history_size: usize,
+    display_offset: usize,
 }
 
 /// Helper for converting Alacritty cursor points to display coordinates.
@@ -442,6 +448,7 @@ pub struct TerminalElement {
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
+    show_scrollbar: bool,
     cached_font_family: Option<gpui::SharedString>,
     text_style: TextStyle,
 }
@@ -461,12 +468,14 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         text_style: TextStyle,
+        show_scrollbar: bool,
     ) -> Self {
         TerminalElement {
             terminal,
             focus,
             focused,
             cursor_visible,
+            show_scrollbar,
             cached_font_family: None,
             text_style,
         }
@@ -1382,6 +1391,7 @@ impl Element for TerminalElement {
 
         let mut text_style = self.text_style.clone();
         let background_color = text_style.background;
+        let foreground_color = text_style.foreground;
 
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
         let text_system = window.text_system();
@@ -1414,10 +1424,12 @@ impl Element for TerminalElement {
             cursor_char,
             cursor,
             selection,
+            history_size,
             ..
         } = &self.terminal.read(cx).last_content;
         let mode = *mode;
         let display_offset = *display_offset;
+        let history_size = *history_size;
 
         let (rects, block_fragments, polygon_fragments, batched_text_runs) = Self::layout_grid(
             cells.iter().cloned(),
@@ -1490,8 +1502,11 @@ impl Element for TerminalElement {
             selection_rects,
             cursor: cursor_layout,
             background_color,
+            foreground_color,
             dimensions,
             mode,
+            history_size,
+            display_offset,
         }
     }
 
@@ -1540,6 +1555,47 @@ impl Element for TerminalElement {
                 && let Some(cursor) = &layout.cursor
             {
                 cursor.paint(origin, window, cx);
+            }
+
+            // Paint scrollbar on top of terminal content
+            let history_size = layout.history_size;
+            if history_size > 0 && self.show_scrollbar {
+                let track_height = f32::from(bounds.size.height);
+                let visible_lines = layout.dimensions.num_lines();
+                let total_lines = history_size + visible_lines;
+
+                let thumb_height = (visible_lines as f32 / total_lines as f32 * track_height)
+                    .max(SCROLLBAR_THUMB_MIN_HEIGHT);
+                let scrollable_track = track_height - thumb_height;
+
+                let display_offset = layout.display_offset;
+                let thumb_top = if history_size > 0 {
+                    (1.0 - display_offset as f32 / history_size as f32) * scrollable_track
+                } else {
+                    0.0
+                };
+
+                let track_x = bounds.origin.x + bounds.size.width - px(SCROLLBAR_WIDTH);
+                let track_bounds = Bounds::new(
+                    point(track_x, bounds.origin.y),
+                    size(px(SCROLLBAR_WIDTH), bounds.size.height),
+                );
+                let track_color = Hsla { a: 0.08, ..layout.foreground_color };
+                window.paint_quad(fill(track_bounds, track_color));
+
+                let thumb_bounds = Bounds::new(
+                    point(track_x, bounds.origin.y + px(thumb_top)),
+                    size(px(SCROLLBAR_WIDTH), px(thumb_height)),
+                );
+                let thumb_color = Hsla { a: 0.45, ..layout.foreground_color };
+                window.paint_quad(gpui::quad(
+                    thumb_bounds,
+                    px(SCROLLBAR_WIDTH / 2.0),
+                    thumb_color,
+                    gpui::Edges::default(),
+                    Hsla::transparent_black(),
+                    gpui::BorderStyle::Solid,
+                ));
             }
         });
     }

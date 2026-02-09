@@ -226,6 +226,7 @@ pub struct TerminalContent {
     pub terminal_bounds: TerminalBounds,
     pub scrolled_to_top: bool,
     pub scrolled_to_bottom: bool,
+    pub history_size: usize,
 }
 
 impl Default for TerminalContent {
@@ -244,6 +245,7 @@ impl Default for TerminalContent {
             terminal_bounds: TerminalBounds::default(),
             scrolled_to_top: false,
             scrolled_to_bottom: true,
+            history_size: 0,
         }
     }
 }
@@ -707,6 +709,7 @@ impl Terminal {
             terminal_bounds: last_content.terminal_bounds,
             scrolled_to_top: content.display_offset == term.history_size(),
             scrolled_to_bottom: content.display_offset == 0,
+            history_size: term.history_size(),
         }
     }
 
@@ -738,6 +741,16 @@ impl Terminal {
     pub fn scroll_to_bottom(&mut self) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+    }
+
+    /// Scrolls to a specific display offset in the scrollback history.
+    pub fn scroll_to_offset(&mut self, target_offset: usize) {
+        let current = self.last_content.display_offset;
+        let delta = target_offset as i32 - current as i32;
+        if delta != 0 {
+            self.events
+                .push_back(InternalEvent::Scroll(AlacScroll::Delta(delta)));
+        }
     }
 
     /// Selects all text in the terminal.

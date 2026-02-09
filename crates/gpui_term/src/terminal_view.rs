@@ -22,11 +22,14 @@
 
 use gpui::{
     App, ClipboardItem, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
-    ScrollWheelEvent, Styled, Window, actions, div,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, ScrollWheelEvent, Styled, Window, actions, div, px,
 };
 
 use crate::{Event, Terminal, TerminalElement, TextStyle, ThemeManager};
+
+const SCROLLBAR_WIDTH: f32 = 8.0;
+const SCROLLBAR_THUMB_MIN_HEIGHT: f32 = 20.0;
 
 actions!(
     terminal,
@@ -55,6 +58,10 @@ pub struct TerminalView {
     focus_handle: FocusHandle,
     has_bell: bool,
     text_style: crate::TextStyle,
+    is_dragging_scrollbar: bool,
+    scrollbar_hovered: bool,
+    drag_start_y: Pixels,
+    drag_start_offset: usize,
 }
 
 impl TerminalView {
@@ -102,6 +109,10 @@ impl TerminalView {
             focus_handle,
             has_bell: false,
             text_style,
+            is_dragging_scrollbar: false,
+            scrollbar_hovered: false,
+            drag_start_y: px(0.),
+            drag_start_offset: 0,
         }
     }
 
@@ -169,6 +180,21 @@ impl TerminalView {
         }
     }
 
+    fn is_mouse_in_scrollbar(&self, position: &gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let content = &self.terminal.read(cx).last_content;
+        if content.history_size == 0 {
+            return false;
+        }
+        let bounds = content.terminal_bounds.bounds;
+        let scrollbar_left = bounds.origin.x + bounds.size.width - px(SCROLLBAR_WIDTH);
+        position.x >= scrollbar_left && position.x <= bounds.origin.x + bounds.size.width
+            && position.y >= bounds.origin.y && position.y <= bounds.origin.y + bounds.size.height
+    }
+
+    fn is_in_scrollbar_area(&self, event: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
+        self.is_mouse_in_scrollbar(&event.position, cx)
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -193,13 +219,72 @@ impl TerminalView {
             }
         }
 
+        // Check if click is in the scrollbar area
+        if event.button == MouseButton::Left && self.is_in_scrollbar_area(event, cx) {
+            cx.stop_propagation();
+            self.handle_scrollbar_click(event, cx);
+            return;
+        }
+
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_down(event, cx);
         });
         cx.notify();
     }
 
+    fn handle_scrollbar_click(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let content = &self.terminal.read(cx).last_content;
+        let history_size = content.history_size;
+        let visible_lines = content.terminal_bounds.num_lines();
+        let display_offset = content.display_offset;
+        let track_height = f32::from(content.terminal_bounds.height());
+
+        if history_size == 0 || track_height <= 0.0 {
+            return;
+        }
+
+        let total_lines = history_size + visible_lines;
+        let thumb_height = (visible_lines as f32 / total_lines as f32 * track_height)
+            .max(SCROLLBAR_THUMB_MIN_HEIGHT);
+        let scrollable_track = track_height - thumb_height;
+        let thumb_top = if history_size > 0 {
+            (1.0 - display_offset as f32 / history_size as f32) * scrollable_track
+        } else {
+            0.0
+        };
+
+        let click_y = f32::from(
+            event.position.y - content.terminal_bounds.bounds.origin.y,
+        );
+
+        // If click is on the thumb, start dragging
+        if click_y >= thumb_top && click_y <= thumb_top + thumb_height {
+            self.is_dragging_scrollbar = true;
+            self.drag_start_y = event.position.y;
+            self.drag_start_offset = display_offset;
+        } else {
+            // Click on track: scroll page up/down
+            let thumb_center = thumb_top + thumb_height / 2.0;
+            if click_y < thumb_center {
+                self.terminal.update(cx, |terminal, _| {
+                    terminal.scroll_page_up();
+                });
+            } else {
+                self.terminal.update(cx, |terminal, _| {
+                    terminal.scroll_page_down();
+                });
+            }
+        }
+        cx.notify();
+    }
+
     fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_dragging_scrollbar {
+            self.is_dragging_scrollbar = false;
+            cx.notify();
+            return;
+        }
+
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_up(event, cx);
         });
@@ -212,6 +297,12 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let was_hovered = self.scrollbar_hovered;
+        self.scrollbar_hovered = self.is_mouse_in_scrollbar(&event.position, cx);
+        if was_hovered != self.scrollbar_hovered {
+            cx.notify();
+        }
+
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_move(event, cx);
         });
@@ -223,10 +314,47 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_dragging_scrollbar {
+            self.handle_scrollbar_drag(event, cx);
+            return;
+        }
+
         let bounds = self.terminal.read(cx).last_content.terminal_bounds.bounds;
         self.terminal.update(cx, |terminal, cx| {
             terminal.mouse_drag(event, bounds, cx);
         });
+    }
+
+    fn handle_scrollbar_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let content = &self.terminal.read(cx).last_content;
+        let history_size = content.history_size;
+        let visible_lines = content.terminal_bounds.num_lines();
+        let track_height = f32::from(content.terminal_bounds.height());
+
+        if history_size == 0 || track_height <= 0.0 {
+            return;
+        }
+
+        let total_lines = history_size + visible_lines;
+        let thumb_height = (visible_lines as f32 / total_lines as f32 * track_height)
+            .max(SCROLLBAR_THUMB_MIN_HEIGHT);
+        let scrollable_track = track_height - thumb_height;
+
+        if scrollable_track <= 0.0 {
+            return;
+        }
+
+        let dy = f32::from(event.position.y - self.drag_start_y);
+        let ratio = dy / scrollable_track;
+        // Moving thumb down means scrolling towards bottom (decreasing offset)
+        let target_offset =
+            (self.drag_start_offset as f32 - ratio * history_size as f32).round() as i32;
+        let target_offset = target_offset.clamp(0, history_size as i32) as usize;
+
+        self.terminal.update(cx, |terminal, _| {
+            terminal.scroll_to_offset(target_offset);
+        });
+        cx.notify();
     }
 
     fn on_scroll(
@@ -372,6 +500,7 @@ impl Render for TerminalView {
                 is_focused,
                 true,
                 self.text_style.clone(),
+                self.scrollbar_hovered || self.is_dragging_scrollbar,
             ))
     }
 }
